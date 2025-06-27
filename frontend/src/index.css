@@ -3,6 +3,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Custom utilities for YouTube-style cards */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 body {
   font-family: 'Noto Sans JP', sans-serif;
   margin: 0;
