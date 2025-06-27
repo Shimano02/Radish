@@ -10,6 +10,7 @@ interface UseVideoRecordingReturn {
   pauseRecording: () => void
   resumeRecording: () => void
   downloadRecording: () => void
+  uploadRecording: (conversationId: string) => Promise<boolean>
   error: string | null
 }
 
@@ -178,6 +179,24 @@ export const useVideoRecording = (): UseVideoRecordingReturn => {
     }
   }, [recordedBlobs])
 
+  const uploadRecording = useCallback(async (conversationId: string) => {
+    if (recordedBlobs.length === 0) {
+      setError('アップロードする録画データがありません')
+      return false
+    }
+
+    try {
+      const { uploadRecording: uploadAPI } = await import('../services/api')
+      const blob = new Blob(recordedBlobs, { type: 'video/webm' })
+      await uploadAPI(conversationId, blob)
+      return true
+    } catch (err) {
+      console.error('アップロードエラー:', err)
+      setError('録画データのアップロードに失敗しました')
+      return false
+    }
+  }, [recordedBlobs])
+
   return {
     isRecording,
     isPaused,
@@ -188,6 +207,7 @@ export const useVideoRecording = (): UseVideoRecordingReturn => {
     pauseRecording,
     resumeRecording,
     downloadRecording,
+    uploadRecording,
     error
   }
 }

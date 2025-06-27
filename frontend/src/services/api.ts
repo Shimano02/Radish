@@ -30,3 +30,36 @@ export const sendMessage = async (data: {
   const response = await api.post('/api/chat/message', data)
   return response.data
 }
+
+export const getInterviewRecords = async () => {
+  const response = await api.get('/api/admin/records')
+  return response.data
+}
+
+export const downloadRecording = async (recordId: string) => {
+  const response = await api.get(`/api/admin/recording/${recordId}`, {
+    responseType: 'blob'
+  })
+  
+  const url = window.URL.createObjectURL(new Blob([response.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', `interview_${recordId}.webm`)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+
+export const uploadRecording = async (conversationId: string, blob: Blob) => {
+  const formData = new FormData()
+  formData.append('file', blob, `${conversationId}.webm`)
+  formData.append('conversation_id', conversationId)
+  
+  const response = await api.post('/api/admin/upload-recording', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  })
+  return response.data
+}

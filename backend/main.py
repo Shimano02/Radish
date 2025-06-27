@@ -1,18 +1,17 @@
 import os
 import uuid
 import logging
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, Alignment, PatternFill
-from openpyxl.utils import get_column_letter
 
 # Load environment vars from .env
 load_dotenv()
@@ -29,9 +28,13 @@ DIFY_API_KEY = os.getenv("DIFY_API_KEY", "").strip()
 if not DIFY_API_KEY:
     raise RuntimeError("Missing DIFY_API_KEY in environment")
 
-# Excel configuration
-EXCEL_LOG_DIR = Path("interview_logs")
-EXCEL_LOG_DIR.mkdir(exist_ok=True)
+# CSV configuration
+CSV_LOG_DIR = Path("interview_logs")
+CSV_LOG_DIR.mkdir(exist_ok=True)
+
+# Video recording configuration
+VIDEO_STORAGE_DIR = Path("video_recordings")
+VIDEO_STORAGE_DIR.mkdir(exist_ok=True)
 
 # FastAPI setup
 app = FastAPI(title="AI Interviewer API")
@@ -61,47 +64,23 @@ class ChatResponse(BaseModel):
     conversation_id: str
     stage: int
 
-# Excel utilities
-class ExcelLogger:
-    """Excel面接ログ管理クラス"""
+# CSV utilities
+class CSVLogger:
+    """CSV面接ログ管理クラス"""
     
     @staticmethod
-    def get_excel_file_path() -> Path:
-        """日付ベースのExcelファイルパスを取得"""
+    def get_csv_file_path() -> Path:
+        """日付ベースのCSVファイルパスを取得"""
         date_str = datetime.now().strftime('%Y-%m-%d')
-        return EXCEL_LOG_DIR / f"interview_log_{date_str}.xlsx"
+        return CSV_LOG_DIR / f"interview_log_{date_str}.csv"
     
     @staticmethod
-    def create_workbook_with_headers() -> Workbook:
-        """ヘッダー付きの新規Excelワークブックを作成"""
-        workbook = Workbook()
-        worksheet = workbook.active
-        worksheet.title = "面接ログ"
-        
-        # ヘッダー設定
-        headers = [
+    def get_csv_headers() -> List[str]:
+        """CSVヘッダーを取得"""
+        return [
             "タイムスタンプ", "会話ID", "面接官ID", "面接官名", 
             "ユーザーメッセージ", "AI応答", "対話回数", "ステージ"
         ]
-        
-        for col_num, header in enumerate(headers, 1):
-            cell = worksheet.cell(row=1, column=col_num)
-            cell.value = header
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(
-                start_color="366092", 
-                end_color="366092", 
-                fill_type="solid"
-            )
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-        
-        # 列幅調整
-        column_widths = [20, 15, 15, 10, 50, 50, 10, 10]
-        for col_num, width in enumerate(column_widths, 1):
-            column_letter = get_column_letter(col_num)
-            worksheet.column_dimensions[column_letter].width = width
-        
-        return workbook
     
     @classmethod
     async def write_interview_log(
@@ -114,58 +93,67 @@ class ExcelLogger:
         dialogue_count: int,
         stage: int
     ) -> bool:
-        """面接ログをExcelファイルに書き込み"""
+        """面接ログをCSVファイルに書き込み"""
         try:
-            excel_file = cls.get_excel_file_path()
-            
-            # Excelファイルの存在確認と読み込み
-            if excel_file.exists():
-                workbook = load_workbook(excel_file)
-                worksheet = workbook.active
-            else:
-                workbook = cls.create_workbook_with_headers()
-                worksheet = workbook.active
-            
-            # 新しい行を追加
-            new_row = worksheet.max_row + 1
+            csv_file = cls.get_csv_file_path()
             timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
             
-            # データを書き込み
-            row_data = [
-                timestamp,
-                conversation_id,
-                interviewer_id,
-                interviewer_name,
-                user_message,
-                ai_response,
-                dialogue_count,
-                stage
-            ]
+            write_header = not csv_file.exists()
             
-            for col_num, value in enumerate(row_data, 1):
-                cell = worksheet.cell(row=new_row, column=col_num)
-                cell.value = value
+            with open(csv_file, 'a', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
                 
-                # セルの書式設定
-                if col_num in [1, 2, 3, 4, 7, 8]:  # タイムスタンプ、ID、数値列
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-                else:  # テキスト列
-                    cell.alignment = Alignment(
-                        horizontal="left", 
-                        vertical="top", 
-                        wrap_text=True
-                    )
+                if write_header:
+                    writer.writerow(cls.get_csv_headers())
+                
+                # データを書き込み
+                row_data = [
+                    timestamp,
+                    conversation_id,
+                    interviewer_id,
+                    interviewer_name,
+                    user_message,
+                    ai_response,
+                    dialogue_count,
+                    stage
+                ]
+                writer.writerow(row_data)
             
-            # ファイルを保存
-            workbook.save(excel_file)
-            workbook.close()
-            
-            logger.info(f"面接ログをExcelファイルに保存: {excel_file}")
+            logger.info(f"面接ログをCSVファイルに保存: {csv_file}")
             return True
             
         except Exception as e:
-            logger.error(f"Excelログ保存エラー: {e}")
+            logger.error(f"CSVログ保存エラー: {e}")
             return False
+    
+    @classmethod
+    def get_all_interview_records(cls) -> List[Dict[str, Any]]:
+        """全ての面接記録を取得"""
+        records = []
+        
+        try:
+            for csv_file in CSV_LOG_DIR.glob("interview_log_*.csv"):
+                with open(csv_file, 'r', encoding='utf-8') as file:
+                    reader = csv.DictReader(file)
+                    for row in reader:
+                        record = {
+                            "id": f"{row['会話ID']}_{row['対話回数']}",
+                            "timestamp": row['タイムスタンプ'],
+                            "conversation_id": row['会話ID'],
+                            "interviewer_name": row['面接官名'],
+                            "user_message": row['ユーザーメッセージ'],
+                            "ai_response": row['AI応答'],
+                            "dialogue_count": int(row['対話回数']),
+                            "stage": int(row['ステージ']),
+                            "csv_file": str(csv_file.name)
+                        }
+                        records.append(record)
+        
+        except Exception as e:
+            logger.error(f"面接記録取得エラー: {e}")
+        
+        records.sort(key=lambda x: x['timestamp'], reverse=True)
+        return records
 
 # Dify API utilities
 class DifyAPIClient:
@@ -359,23 +347,107 @@ async def send_message(chat_message: ChatMessage):
     # 6) 更新されたセッション情報を取得
     updated_session = session_manager.get_session(chat_message.conversation_id)
     
-    # 7) Excelログに書き込み
-    await ExcelLogger.write_interview_log(
-        conversation_id=chat_message.conversation_id,
-        interviewer_id=chat_message.interviewer_id,
-        interviewer_name=interviewer["name"],
-        user_message=chat_message.message,
-        ai_response=ai_response,
-        dialogue_count=updated_session["dialogue_count"],
-        stage=updated_session["stage"]
-    )
+    if updated_session:
+        await CSVLogger.write_interview_log(
+            conversation_id=chat_message.conversation_id,
+            interviewer_id=chat_message.interviewer_id,
+            interviewer_name=interviewer["name"],
+            user_message=chat_message.message,
+            ai_response=ai_response,
+            dialogue_count=updated_session["dialogue_count"],
+            stage=updated_session["stage"]
+        )
     
     # 8) レスポンス返却
     return ChatResponse(
         response=ai_response,
         conversation_id=chat_message.conversation_id,
-        stage=updated_session["stage"]
+        stage=updated_session["stage"] if updated_session else 1
     )
+
+@app.post("/api/admin/upload-recording")
+async def upload_recording(
+    conversation_id: str,
+    file: UploadFile = File(...)
+):
+    """録画ファイルをアップロード"""
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{conversation_id}_{timestamp}.webm"
+        file_path = VIDEO_STORAGE_DIR / filename
+        
+        # ファイルを保存
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        logger.info(f"録画ファイルを保存: {file_path}")
+        
+        return {
+            "success": True,
+            "filename": filename,
+            "file_path": str(file_path)
+        }
+    
+    except Exception as e:
+        logger.error(f"録画アップロードエラー: {e}")
+        raise HTTPException(status_code=500, detail="録画ファイルのアップロードに失敗しました")
+
+@app.get("/api/admin/records")
+async def get_interview_records():
+    """面接記録一覧を取得"""
+    try:
+        records = CSVLogger.get_all_interview_records()
+        
+        conversation_groups = {}
+        for record in records:
+            conv_id = record['conversation_id']
+            if conv_id not in conversation_groups:
+                recording_files = list(VIDEO_STORAGE_DIR.glob(f"{conv_id}_*.webm"))
+                has_recording = len(recording_files) > 0
+                
+                conversation_groups[conv_id] = {
+                    "id": conv_id,
+                    "timestamp": record['timestamp'],
+                    "conversation_id": conv_id,
+                    "interviewer_name": record['interviewer_name'],
+                    "user_messages": 0,
+                    "ai_responses": 0,
+                    "duration": "計算中",
+                    "has_recording": has_recording,
+                    "csv_file": record['csv_file']
+                }
+            conversation_groups[conv_id]["user_messages"] += 1
+            conversation_groups[conv_id]["ai_responses"] += 1
+        
+        return list(conversation_groups.values())
+    
+    except Exception as e:
+        logger.error(f"面接記録取得エラー: {e}")
+        raise HTTPException(status_code=500, detail="面接記録の取得に失敗しました")
+
+@app.get("/api/admin/recording/{record_id}")
+async def download_recording(record_id: str):
+    """録画ファイルをダウンロード"""
+    try:
+        recording_files = list(VIDEO_STORAGE_DIR.glob(f"{record_id}_*.webm"))
+        
+        if not recording_files:
+            raise HTTPException(status_code=404, detail="録画ファイルが見つかりません")
+        
+        recording_file = max(recording_files, key=lambda f: f.stat().st_mtime)
+        
+        return FileResponse(
+            path=str(recording_file),
+            filename=f"interview_{record_id}.webm",
+            media_type="video/webm"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"録画ダウンロードエラー: {e}")
+        raise HTTPException(status_code=500, detail="録画ファイルのダウンロードに失敗しました")
 
 @app.get("/health")
 async def health_check():
@@ -383,7 +455,8 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "excel_log_dir": str(EXCEL_LOG_DIR.absolute())
+        "csv_log_dir": str(CSV_LOG_DIR.absolute()),
+        "video_storage_dir": str(VIDEO_STORAGE_DIR.absolute())
     }
 
 if __name__ == "__main__":

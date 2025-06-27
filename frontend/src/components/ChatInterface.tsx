@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { ArrowLeft, Mic, MicOff, Send, Video, Square, Pause, Play, Download } from 'lucide-react'
+import { Mic, MicOff, Send, Video, Square, Pause, Play, Download } from 'lucide-react'
 import { Interviewer, ChatMessage } from '../types'
 import { sendMessage } from '../services/api'
 import { useVideoRecording } from '../hooks/useVideoRecording'
@@ -7,10 +7,10 @@ import { useVideoRecording } from '../hooks/useVideoRecording'
 interface Props {
   interviewer: Interviewer
   conversationId: string
-  onBack: () => void
+  onViewChange: (view: 'interview' | 'admin') => void
 }
 
-const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onBack }) => {
+const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewChange }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputText, setInputText] = useState('')
   const [isVoiceRecording, setIsVoiceRecording] = useState(false)
@@ -29,6 +29,7 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onBack })
     pauseRecording: pauseVideoRecording,
     resumeRecording: resumeVideoRecording,
     downloadRecording: downloadVideoRecording,
+    uploadRecording: uploadVideoRecording,
     error: videoError
   } = useVideoRecording()
 
@@ -165,13 +166,7 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onBack })
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <div className="gradient-header text-white p-4">
-        <div className="flex items-center">
-          <button
-            onClick={onBack}
-            className="mr-4 p-2 hover:bg-white/20 rounded-full transition-colors"
-          >
-            <ArrowLeft size={24} />
-          </button>
+        <div className="flex items-center justify-between">
           <div className="flex items-center">
             <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mr-3">
               <div className="text-2xl">👩‍💼</div>
@@ -181,6 +176,12 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onBack })
               <p className="text-sm opacity-90">AI面接官</p>
             </div>
           </div>
+          <button
+            onClick={() => onViewChange('admin')}
+            className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-full transition-colors text-sm"
+          >
+            管理画面
+          </button>
         </div>
       </div>
 
@@ -246,15 +247,24 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onBack })
                 </div>
               )}
               
-              {/* ダウンロードボタン */}
+              {/* ダウンロード・アップロードボタン */}
               {recordedBlobs.length > 0 && !isVideoRecording && (
-                <button
-                  onClick={downloadVideoRecording}
-                  className="bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg transition-colors"
-                  title="録画をダウンロード"
-                >
-                  <Download size={24} />
-                </button>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={downloadVideoRecording}
+                    className="bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full shadow-lg transition-colors"
+                    title="録画をダウンロード"
+                  >
+                    <Download size={24} />
+                  </button>
+                  <button
+                    onClick={() => uploadVideoRecording(conversationId)}
+                    className="bg-green-500 hover:bg-green-600 text-white p-3 rounded-full shadow-lg transition-colors"
+                    title="録画をサーバーに保存"
+                  >
+                    <Video size={24} />
+                  </button>
+                </div>
               )}
             </div>
           </div>
