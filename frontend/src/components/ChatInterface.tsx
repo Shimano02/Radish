@@ -272,33 +272,43 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
             </div>
           </div>
 
-          {/* Zoom/Google Meet風の2画面レイアウト */}
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            {/* 面接官画面 */}
-            <div className="relative aspect-video rounded-2xl overflow-hidden shadow-lg bg-gray-900">
-              {isSpeaking ? (
-                <video
-                  src="/assets/68402585-ed54-42ec-9dae-8a848802abca.mp4"
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <img 
-                  src="/assets/スクリーンショット 2025-06-26 17.59.37.png"
-                  alt={`${interviewer.title} ${interviewer.name}`}
-                  className="w-full h-full object-contain"
-                />
-              )}
-              <div className="absolute bottom-4 left-4 bg-black/70 text-white px-3 py-1 rounded-lg">
+          {/* Zoom/Google Meet風のレイアウト */}
+          <div className="flex justify-center mb-8">
+            {/* 面接官アバター */}
+            <div className="relative">
+              <div className="w-32 h-32 rounded-full overflow-hidden shadow-xl border-4 border-white bg-gray-900">
+                {isSpeaking ? (
+                  <video
+                    src="/assets/68402585-ed54-42ec-9dae-8a848802abca.mp4"
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <img 
+                    src="/assets/スクリーンショット 2025-06-26 17.59.37.png"
+                    alt={`${interviewer.title} ${interviewer.name}`}
+                    className="w-full h-full object-cover"
+                  />
+                )}
+              </div>
+              <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 bg-white text-gray-800 px-3 py-1 rounded-full shadow-lg border">
                 <span className="text-sm font-medium">{interviewer.title} {interviewer.name}</span>
               </div>
+              {isSpeaking && (
+                <div className="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                  <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
+                </div>
+              )}
             </div>
+          </div>
 
-            {/* ユーザーカメラ画面 */}
-            <div className="relative aspect-video rounded-2xl overflow-hidden shadow-lg bg-gray-900">
+          {/* ユーザーカメラ画面（小さく右下に配置） */}
+          <div className="fixed bottom-24 right-6 z-10">
+            <div className="relative w-32 h-24 rounded-xl overflow-hidden shadow-lg bg-gray-900 border-2 border-white">
+
               {cameraStream ? (
                 <>
                   <video
@@ -308,19 +318,18 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
                     playsInline
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute bottom-4 left-4 bg-black/70 text-white px-3 py-1 rounded-lg">
-                    <span className="text-sm font-medium">あなた</span>
+                  <div className="absolute bottom-1 left-1 bg-black/70 text-white px-2 py-1 rounded text-xs">
+                    <span className="font-medium">あなた</span>
                   </div>
                   {isVideoRecording && (
-                    <div className="absolute top-4 right-4 w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
+                    <div className="absolute top-1 right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                   )}
                 </>
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-gray-800">
                   <div className="text-center text-white">
-                    <Video size={48} className="mx-auto mb-2 opacity-50" />
-                    <p className="text-sm opacity-75">カメラが接続されていません</p>
-                    <p className="text-xs opacity-50 mt-1">録画開始でカメラが有効になります</p>
+                    <Video size={20} className="mx-auto mb-1 opacity-50" />
+                    <p className="text-xs opacity-75">カメラ未接続</p>
                   </div>
                 </div>
               )}
