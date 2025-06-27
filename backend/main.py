@@ -449,6 +449,27 @@ async def download_recording(record_id: str):
         logger.error(f"録画ダウンロードエラー: {e}")
         raise HTTPException(status_code=500, detail="録画ファイルのダウンロードに失敗しました")
 
+@app.get("/api/admin/csv/{csv_filename}")
+async def download_csv(csv_filename: str):
+    """CSVファイルをダウンロード"""
+    try:
+        csv_file_path = CSV_LOG_DIR / csv_filename
+        
+        if not csv_file_path.exists():
+            raise HTTPException(status_code=404, detail="CSVファイルが見つかりません")
+        
+        return FileResponse(
+            path=str(csv_file_path),
+            filename=csv_filename,
+            media_type="text/csv"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"CSVダウンロードエラー: {e}")
+        raise HTTPException(status_code=500, detail="CSVファイルのダウンロードに失敗しました")
+
 @app.get("/health")
 async def health_check():
     """ヘルスチェック"""

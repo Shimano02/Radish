@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { ArrowLeft, Download, Eye, Calendar, User, Clock } from 'lucide-react'
-import { getInterviewRecords, downloadRecording } from '../services/api'
+import { getInterviewRecords, downloadRecording, downloadCSV } from '../services/api'
 
 interface InterviewRecord {
   id: string
@@ -44,6 +44,14 @@ const AdminPanel: React.FC<Props> = ({ onViewChange }) => {
       await downloadRecording(recordId)
     } catch (error) {
       console.error('Failed to download recording:', error)
+    }
+  }
+
+  const handleDownloadCSV = async (csvFilename: string) => {
+    try {
+      await downloadCSV(csvFilename)
+    } catch (error) {
+      console.error('Failed to download CSV:', error)
     }
   }
 
@@ -141,6 +149,13 @@ const AdminPanel: React.FC<Props> = ({ onViewChange }) => {
                         <Download size={16} />
                       </button>
                     )}
+                    <button
+                      onClick={() => handleDownloadCSV(record.csv_file)}
+                      className="p-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full transition-colors"
+                      title="CSVをダウンロード"
+                    >
+                      <Download size={16} />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -219,6 +234,12 @@ const AdminPanel: React.FC<Props> = ({ onViewChange }) => {
                     録画をダウンロード
                   </button>
                 )}
+                <button
+                  onClick={() => handleDownloadCSV(selectedRecord.csv_file)}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors"
+                >
+                  CSVをダウンロード
+                </button>
                 <button
                   onClick={() => setShowDetails(false)}
                   className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded transition-colors"
