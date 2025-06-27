@@ -15,6 +15,7 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
   const [inputText, setInputText] = useState('')
   const [isVoiceRecording, setIsVoiceRecording] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const recognitionRef = useRef<any>(null)
   const cameraVideoRef = useRef<HTMLVideoElement>(null)
@@ -123,6 +124,8 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
       if ('speechSynthesis' in window) {
         const utterance = new SpeechSynthesisUtterance(response.response)
         utterance.lang = 'ja-JP'
+        utterance.onstart = () => setIsSpeaking(true)
+        utterance.onend = () => setIsSpeaking(false)
         speechSynthesis.speak(utterance)
       }
     } catch (error) {
@@ -273,11 +276,22 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
           <div className="grid grid-cols-2 gap-6 mb-6">
             {/* 面接官画面 */}
             <div className="relative aspect-video rounded-2xl overflow-hidden shadow-lg bg-gray-900">
-              <img 
-                src={interviewer.image_url} 
-                alt={`${interviewer.title} ${interviewer.name}`}
-                className="w-full h-full object-contain"
-              />
+              {isSpeaking ? (
+                <video
+                  src="/assets/68402585-ed54-42ec-9dae-8a848802abca.mp4"
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <img 
+                  src="/assets/スクリーンショット 2025-06-26 17.59.37.png"
+                  alt={`${interviewer.title} ${interviewer.name}`}
+                  className="w-full h-full object-contain"
+                />
+              )}
               <div className="absolute bottom-4 left-4 bg-black/70 text-white px-3 py-1 rounded-lg">
                 <span className="text-sm font-medium">{interviewer.title} {interviewer.name}</span>
               </div>
