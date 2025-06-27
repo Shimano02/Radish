@@ -13,6 +13,7 @@ interface Props {
 const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewChange }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputText, setInputText] = useState('')
+  const [interimText, setInterimText] = useState('')
   const [isVoiceRecording, setIsVoiceRecording] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
@@ -47,21 +48,46 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       recognitionRef.current = new SpeechRecognition()
       recognitionRef.current.lang = 'ja-JP'
-      recognitionRef.current.continuous = false
-      recognitionRef.current.interimResults = false
+      recognitionRef.current.continuous = true
+      recognitionRef.current.interimResults = true
 
       recognitionRef.current.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript
-        setInputText(transcript)
-        setIsVoiceRecording(false)
+        let interimTranscript = ''
+        let finalTranscript = ''
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript
+          } else {
+            interimTranscript += transcript
+          }
+        }
+        
+        if (finalTranscript) {
+          setInputText(prev => prev + finalTranscript + ' ')
+          setInterimText('')
+        } else {
+          setInterimText(interimTranscript)
+        }
       }
 
-      recognitionRef.current.onerror = () => {
-        setIsVoiceRecording(false)
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error)
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          setIsVoiceRecording(false)
+        }
       }
 
       recognitionRef.current.onend = () => {
-        setIsVoiceRecording(false)
+        if (isVoiceRecording) {
+          try {
+            recognitionRef.current.start()
+          } catch (error) {
+            console.error('Failed to restart recognition:', error)
+            setIsVoiceRecording(false)
+          }
+        }
       }
     }
   }, [])
@@ -151,6 +177,7 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
     if (isVoiceRecording) {
       recognitionRef.current.stop()
       setIsVoiceRecording(false)
+      setInterimText('')
     } else {
       recognitionRef.current.start()
       setIsVoiceRecording(true)
@@ -376,7 +403,7 @@ const ChatInterface: React.FC<Props> = ({ interviewer, conversationId, onViewCha
           <div className="flex items-center space-x-2">
             <div className="flex-1 relative">
               <textarea
-                value={inputText}
+                value={inputText + interimText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="メッセージを入力してください..."
