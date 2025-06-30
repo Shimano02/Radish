@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import csv
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 # Env vars
 DIFY_API_URL = os.getenv("DIFY_API_URL", "https://api.dify.ai/v1").rstrip("/")
 DIFY_API_KEY = os.getenv("DIFY_API_KEY", "").strip()
+GOOGLE_SHEETS_TOKEN = os.getenv("GOOGLE_SHEETS_TOKEN", "")
+SHEET_ID = os.getenv("SHEET_ID", "")
 
 # Validate
 if not DIFY_API_KEY:
@@ -270,6 +273,106 @@ INTERVIEWERS: List[Dict[str, Any]] = [
 
 ]
 
+class StructuredDataExtractor:
+    """構造化データ抽出クラス"""
+    
+    @staticmethod
+    async def extract_interview_data(conversation_history: List[Dict], dify_client: DifyAPIClient) -> Dict[str, Any]:
+        """面接データから構造化情報を抽出"""
+        
+        conversation_text = "\n".join([
+            f"質問: {msg.get('ai', '')}\n回答: {msg.get('user', '')}" 
+            for msg in conversation_history
+        ])
+        
+        extraction_prompt = f"""
+以下の面接会話から、応募者の情報を正確に抽出してください。
+
+会話内容:
+{conversation_text}
+
+以下のJSON形式で回答してください:
+{{
+    "name": "応募者の名前（フルネーム）",
+    "age": "年齢（数字のみ）",
+    "experience": "職歴・経験（具体的な年数と職種）",
+    "skills": "スキル・資格",
+    "motivation": "志望動機・やる気",
+    "communication": "コミュニケーション能力の評価",
+    "completeness_score": "情報の完全性（1-10）",
+    "quality_score": "回答の質（1-10）",
+    "recommendation": "本面接への推薦可否（可/不可）"
+}}
+
+情報が不明な場合は"不明"と記載してください。
+"""
+        
+        try:
+            response = await dify_client.send_chat_message(
+                message=extraction_prompt,
+                interviewer_id="data_extractor",
+                conversation_id="extraction_session",
+                dialogue_count=1
+            )
+            
+            answer = response.get("answer", "{}")
+            start_idx = answer.find('{')
+            end_idx = answer.rfind('}') + 1
+            if start_idx != -1 and end_idx > start_idx:
+                json_str = answer[start_idx:end_idx]
+                extracted_data = json.loads(json_str)
+            else:
+                extracted_data = {}
+            
+            return extracted_data
+            
+        except Exception as e:
+            logger.error(f"データ抽出エラー: {e}")
+            return {}
+
+class GoogleSheetsService:
+    """Google Sheets連携サービス"""
+    
+    @staticmethod
+    async def save_interview_data(conversation_id: str, extracted_data: Dict[str, Any]) -> bool:
+        """抽出データをGoogle Sheetsに保存"""
+        if not GOOGLE_SHEETS_TOKEN or not SHEET_ID:
+            logger.warning("Google Sheets設定が不完全です")
+            return False
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                sheets_data = {
+                    "values": [[
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        conversation_id,
+                        extracted_data.get("name", "不明"),
+                        extracted_data.get("age", "不明"),
+                        extracted_data.get("experience", "不明"),
+                        extracted_data.get("skills", "不明"),
+                        extracted_data.get("motivation", "不明"),
+                        extracted_data.get("communication", "不明"),
+                        extracted_data.get("completeness_score", "0"),
+                        extracted_data.get("quality_score", "0"),
+                        extracted_data.get("recommendation", "不可")
+                    ]]
+                }
+                
+                response = await client.post(
+                    f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/面接データ:append?valueInputOption=USER_ENTERED",
+                    headers={
+                        "Authorization": f"Bearer {GOOGLE_SHEETS_TOKEN}",
+                        "Content-Type": "application/json"
+                    },
+                    json=sheets_data
+                )
+                
+                return response.status_code == 200
+                
+        except Exception as e:
+            logger.error(f"Google Sheets保存エラー: {e}")
+            return False
+
 # Initialize services
 dify_client = DifyAPIClient(DIFY_API_URL, DIFY_API_KEY)
 session_manager = SessionManager()
@@ -357,6 +460,17 @@ async def send_message(chat_message: ChatMessage):
             dialogue_count=updated_session["dialogue_count"],
             stage=updated_session["stage"]
         )
+        
+        if updated_session["dialogue_count"] >= 3:
+            extracted_data = await StructuredDataExtractor.extract_interview_data(
+                updated_session["messages"], dify_client
+            )
+            
+            if extracted_data:
+                await GoogleSheetsService.save_interview_data(
+                    chat_message.conversation_id, extracted_data
+                )
+                logger.info(f"構造化データを保存: {extracted_data}")
     
     # 8) レスポンス返却
     return ChatResponse(
@@ -469,6 +583,28 @@ async def download_csv(csv_filename: str):
     except Exception as e:
         logger.error(f"CSVダウンロードエラー: {e}")
         raise HTTPException(status_code=500, detail="CSVファイルのダウンロードに失敗しました")
+
+@app.get("/api/admin/extracted-data/{conversation_id}")
+async def get_extracted_data(conversation_id: str):
+    """抽出された構造化データを取得"""
+    try:
+        session = session_manager.get_session(conversation_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="セッションが見つかりません")
+        
+        extracted_data = await StructuredDataExtractor.extract_interview_data(
+            session["messages"], dify_client
+        )
+        
+        return {
+            "conversation_id": conversation_id,
+            "extracted_data": extracted_data,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"抽出データ取得エラー: {e}")
+        raise HTTPException(status_code=500, detail="データ取得に失敗しました")
 
 @app.get("/health")
 async def health_check():
