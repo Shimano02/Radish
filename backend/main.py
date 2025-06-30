@@ -14,6 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from google.auth.transport.requests import Request
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # Load environment vars from .env
 load_dotenv()
@@ -25,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Env vars
 DIFY_API_URL = os.getenv("DIFY_API_URL", "https://api.dify.ai/v1").rstrip("/")
 DIFY_API_KEY = os.getenv("DIFY_API_KEY", "").strip()
-GOOGLE_SHEETS_TOKEN = os.getenv("GOOGLE_SHEETS_TOKEN", "")
+GOOGLE_SERVICE_ACCOUNT_PATH = os.getenv("GOOGLE_SERVICE_ACCOUNT_PATH", "")
 SHEET_ID = os.getenv("SHEET_ID", "")
 
 # Validate
@@ -369,38 +372,45 @@ class GoogleSheetsService:
     @staticmethod
     async def save_interview_data(conversation_id: str, extracted_data: Dict[str, Any]) -> bool:
         """抽出データをGoogle Sheetsに保存"""
-        if not GOOGLE_SHEETS_TOKEN or not SHEET_ID:
+        if not GOOGLE_SERVICE_ACCOUNT_PATH or not SHEET_ID:
             logger.warning("Google Sheets設定が不完全です")
             return False
         
         try:
-            async with httpx.AsyncClient() as client:
-                sheets_data = {
-                    "values": [[
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        conversation_id,
-                        extracted_data.get("name", "不明"),
-                        extracted_data.get("age", "不明"),
-                        extracted_data.get("experience", "不明"),
-                        extracted_data.get("skills", "不明"),
-                        extracted_data.get("motivation", "不明"),
-                        extracted_data.get("communication", "不明"),
-                        extracted_data.get("completeness_score", "0"),
-                        extracted_data.get("quality_score", "0"),
-                        extracted_data.get("recommendation", "不可")
-                    ]]
-                }
-                
-                response = await client.post(
-                    f"https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values/面接データ:append?valueInputOption=USER_ENTERED",
-                    headers={
-                        "Authorization": f"Bearer {GOOGLE_SHEETS_TOKEN}",
-                        "Content-Type": "application/json"
-                    },
-                    json=sheets_data
-                )
-                
-                return response.status_code == 200
+            credentials = service_account.Credentials.from_service_account_file(
+                GOOGLE_SERVICE_ACCOUNT_PATH,
+                scopes=['https://www.googleapis.com/auth/spreadsheets']
+            )
+            
+            service = build('sheets', 'v4', credentials=credentials)
+            
+            values = [[
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                conversation_id,
+                extracted_data.get("name", "不明"),
+                extracted_data.get("age", "不明"),
+                extracted_data.get("experience", "不明"),
+                extracted_data.get("skills", "不明"),
+                extracted_data.get("motivation", "不明"),
+                extracted_data.get("communication", "不明"),
+                extracted_data.get("completeness_score", "0"),
+                extracted_data.get("quality_score", "0"),
+                extracted_data.get("recommendation", "不可")
+            ]]
+            
+            body = {
+                'values': values
+            }
+            
+            result = service.spreadsheets().values().append(
+                spreadsheetId=SHEET_ID,
+                range='面接データ!A:K',
+                valueInputOption='USER_ENTERED',
+                body=body
+            ).execute()
+            
+            logger.info(f"Google Sheets保存成功: {result.get('updates', {}).get('updatedRows', 0)}行追加")
+            return True
                 
         except Exception as e:
             logger.error(f"Google Sheets保存エラー: {e}")
