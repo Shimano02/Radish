@@ -337,14 +337,12 @@ class SessionManager:
 # In-memory data
 INTERVIEWERS: List[Dict[str, Any]] = [
     {
-        "id": "construction_engineer",
+        "id": "fudou",
         "name": "不動",
         "title": "施設長",
         "description": "１次面接を担当します。",
-        #"image_url": "/assets/construction_engineer.png"
         "image_url": "/assets/dayCare.png"
     }
-
 ]
 
 class QuestionManager:
