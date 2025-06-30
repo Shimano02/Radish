@@ -701,6 +701,51 @@ async def send_message(chat_message: ChatMessage):
                     chat_message.conversation_id, extracted_data
                 )
                 logger.info(f"構造化データを保存: {extracted_data}")
+    else:
+        logger.warning(f"セッションが見つかりません: {chat_message.conversation_id}")
+        
+        csv_records = CSVLogger.get_all_interview_records()
+        conversation_messages = [r for r in csv_records if r.get('conversation_id') == chat_message.conversation_id]
+        estimated_dialogue_count = len(conversation_messages) + 1
+        
+        await CSVLogger.write_interview_log(
+            conversation_id=chat_message.conversation_id,
+            interviewer_id=chat_message.interviewer_id,
+            interviewer_name=interviewer["name"],
+            user_message=chat_message.message,
+            ai_response=ai_response,
+            dialogue_count=estimated_dialogue_count,
+            stage=estimated_dialogue_count
+        )
+        
+        if estimated_dialogue_count >= 7:
+            logger.info(f"CSVベースでGoogle Sheets保存をトリガー: {estimated_dialogue_count}メッセージ")
+            
+            all_messages = []
+            for record in conversation_messages:
+                all_messages.append({
+                    "user": record.get('user_message', ''),
+                    "ai": record.get('ai_response', ''),
+                    "timestamp": record.get('timestamp', '')
+                })
+            
+            all_messages.append({
+                "user": chat_message.message,
+                "ai": ai_response,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            })
+            
+            extracted_data = await StructuredDataExtractor.extract_interview_data(
+                all_messages, openai_client
+            )
+            
+            if extracted_data:
+                await GoogleSheetsService.save_interview_data(
+                    chat_message.conversation_id, extracted_data
+                )
+                logger.info(f"CSVベース構造化データを保存: {extracted_data}")
+        
+        updated_session = {"stage": estimated_dialogue_count}
     
     # 8) レスポンス返却
     return ChatResponse(
