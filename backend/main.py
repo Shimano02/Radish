@@ -175,6 +175,7 @@ class OpenAIAPIClient:
         interviewer_id: str,
         conversation_id: str,
         dialogue_count: int,
+        question_manager: 'QuestionManager',
         dify_conversation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """OpenAI APIにチャットメッセージを送信"""
@@ -182,7 +183,44 @@ class OpenAIAPIClient:
         if interviewer_id == "data_extractor":
             return await self._extract_structured_data(message)
         
-        system_prompt = f"""
+        question_data = question_manager.get_question_by_stage(dialogue_count)
+        
+        if question_data:
+            question_content = question_data.get('質問内容', '')
+            evaluation_criteria = question_manager.get_evaluation_criteria(question_data)
+            ng_words = question_manager.get_ng_words(question_data)
+            follow_up = question_manager.get_followup_question(question_data)
+            question_id = question_data.get('質問ID', '')
+            category = question_data.get('評価カテゴリ', '')
+            
+            system_prompt = f"""
+あなたは介護施設の面接官「不動」です。施設長として1次面接を担当しています。
+応募者との対話回数: {dialogue_count}
+
+【現在の質問】({question_id} - {category})
+{question_content}
+
+【評価基準】
+{evaluation_criteria}
+
+【注意すべきNGワード】
+{ng_words}
+
+【フォローアップ質問】
+{follow_up}
+
+【面接進行の指針】
+- 親しみやすく、でも真剣な態度で接する
+- 質問に対する回答を丁寧に聞き、適切なフォローアップを行う
+- 簡潔で分かりやすい日本語を使用
+- 応募者の回答にNGワードが含まれている場合は、より詳しく聞き返す
+- 評価ポイントに基づいて回答の質を判断する
+- 必要に応じてフォローアップ質問を活用する
+
+対話が7回以上続いた場合は、面接を自然に終了してください。
+"""
+        else:
+            system_prompt = f"""
 あなたは介護施設の面接官「不動」です。施設長として1次面接を担当しています。
 応募者との対話回数: {dialogue_count}
 
@@ -192,7 +230,7 @@ class OpenAIAPIClient:
 - 応募者の経験や人柄を引き出す質問
 - 簡潔で分かりやすい日本語
 
-対話が3回以上続いた場合は、面接を自然に終了してください。
+対話が6回以上続いた場合は、面接を自然に終了してください。
 """
         
         try:
@@ -309,6 +347,63 @@ INTERVIEWERS: List[Dict[str, Any]] = [
 
 ]
 
+class QuestionManager:
+    """CSV質問管理クラス"""
+    
+    def __init__(self, csv_path: str = "interview_questions.csv"):
+        self.questions = []
+        self.csv_path = csv_path
+        self.load_questions()
+    
+    def load_questions(self):
+        """CSVファイルから質問を読み込み"""
+        try:
+            with open(self.csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                self.questions = [row for row in reader if row.get('質問内容')]
+            logger.info(f"質問を{len(self.questions)}件読み込みました")
+        except Exception as e:
+            logger.error(f"質問読み込みエラー: {e}")
+            self.questions = []
+    
+    def get_question_by_stage(self, dialogue_count: int) -> Dict[str, str]:
+        """対話回数に基づいて適切な質問を取得"""
+        if dialogue_count == 1:
+            return next((q for q in self.questions if q['質問ID'] == 'INTRO-001'), {})
+        elif dialogue_count == 2:
+            return next((q for q in self.questions if q['質問ID'] == 'PERS-001'), {})
+        elif dialogue_count == 3:
+            return next((q for q in self.questions if q['質問ID'] == 'PERS-002'), {})
+        elif dialogue_count == 4:
+            return next((q for q in self.questions if q['質問ID'] == 'CAREER-001'), {})
+        elif dialogue_count == 5:
+            return next((q for q in self.questions if q['質問ID'] == 'TECH-001'), {})
+        elif dialogue_count == 6:
+            return next((q for q in self.questions if q['質問ID'] == 'MOTI-001'), {})
+        else:
+            return next((q for q in self.questions if q['質問ID'] == 'QUEST-001'), {})
+    
+    def get_evaluation_criteria(self, question_data: Dict[str, str]) -> str:
+        """質問の評価基準を取得"""
+        criteria = []
+        if question_data.get('評価ポイント'):
+            criteria.append(f"評価ポイント: {question_data['評価ポイント']}")
+        if question_data.get('評価基準'):
+            criteria.append(f"評価基準: {question_data['評価基準']}")
+        if question_data.get('重要度'):
+            criteria.append(f"重要度: {question_data['重要度']}")
+        if question_data.get('想定回答時間'):
+            criteria.append(f"想定回答時間: {question_data['想定回答時間']}")
+        return "\n".join(criteria)
+    
+    def get_ng_words(self, question_data: Dict[str, str]) -> str:
+        """NGワードを取得"""
+        return question_data.get('NGワード例', '')
+    
+    def get_followup_question(self, question_data: Dict[str, str]) -> str:
+        """フォローアップ質問を取得"""
+        return question_data.get('フォローアップ質問', '')
+
 class StructuredDataExtractor:
     """構造化データ抽出クラス"""
     
@@ -393,6 +488,8 @@ class GoogleSheetsService:
                 extracted_data.get("skills", "不明"),
                 extracted_data.get("motivation", "不明"),
                 extracted_data.get("communication", "不明"),
+                extracted_data.get("learning_attitude", "不明"),
+                extracted_data.get("problem_solving", "不明"),
                 extracted_data.get("completeness_score", "0"),
                 extracted_data.get("quality_score", "0"),
                 extracted_data.get("recommendation", "不可")
@@ -508,6 +605,7 @@ class InterviewEvaluator:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAIAPIClient(OPENAI_API_KEY)
 session_manager = SessionManager()
+question_manager = QuestionManager()
 
 # Helper functions
 def get_interviewer_by_id(interviewer_id: str) -> Optional[Dict[str, Any]]:
@@ -564,6 +662,7 @@ async def send_message(chat_message: ChatMessage):
         interviewer_id=chat_message.interviewer_id,
         conversation_id=chat_message.conversation_id,
         dialogue_count=session["dialogue_count"] + 1,
+        question_manager=question_manager,
         dify_conversation_id=session.get("dify_id")
     )
     
@@ -592,7 +691,7 @@ async def send_message(chat_message: ChatMessage):
             stage=updated_session["stage"]
         )
         
-        if updated_session["dialogue_count"] >= 3:
+        if updated_session["dialogue_count"] >= 6:
             extracted_data = await StructuredDataExtractor.extract_interview_data(
                 updated_session["messages"], openai_client
             )
@@ -768,7 +867,7 @@ async def get_all_extracted_data():
                         })
                 
                 for conv_id, conv_data in conversations.items():
-                    if len(conv_data['messages']) >= 3:  # 3回以上の対話がある場合のみ
+                    if len(conv_data['messages']) >= 6:  # 6回以上の対話がある場合のみ
                         extracted_data = await StructuredDataExtractor.extract_interview_data(
                             conv_data['messages'], openai_client
                         )
@@ -810,7 +909,7 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        app, 
+        "main:app", 
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)), 
         reload=True
