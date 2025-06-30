@@ -47,9 +47,9 @@ VIDEO_STORAGE_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AI Interviewer API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True, 
-    allow_methods=["*"], 
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"]
 )
 
@@ -74,21 +74,21 @@ class ChatResponse(BaseModel):
 # CSV utilities
 class CSVLogger:
     """CSV面接ログ管理クラス"""
-    
+
     @staticmethod
     def get_csv_file_path() -> Path:
         """日付ベースのCSVファイルパスを取得"""
         date_str = datetime.now().strftime('%Y-%m-%d')
         return CSV_LOG_DIR / f"interview_log_{date_str}.csv"
-    
+
     @staticmethod
     def get_csv_headers() -> List[str]:
         """CSVヘッダーを取得"""
         return [
-            "タイムスタンプ", "会話ID", "面接官ID", "面接官名", 
+            "タイムスタンプ", "会話ID", "面接官ID", "面接官名",
             "ユーザーメッセージ", "AI応答", "対話回数", "ステージ"
         ]
-    
+
     @classmethod
     async def write_interview_log(
         cls,
@@ -104,15 +104,15 @@ class CSVLogger:
         try:
             csv_file = cls.get_csv_file_path()
             timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
-            
+
             write_header = not csv_file.exists()
-            
+
             with open(csv_file, 'a', newline='', encoding='utf-8') as file:
                 writer = csv.writer(file)
-                
+
                 if write_header:
                     writer.writerow(cls.get_csv_headers())
-                
+
                 # データを書き込み
                 row_data = [
                     timestamp,
@@ -125,19 +125,19 @@ class CSVLogger:
                     stage
                 ]
                 writer.writerow(row_data)
-            
+
             logger.info(f"面接ログをCSVファイルに保存: {csv_file}")
             return True
-            
+
         except Exception as e:
             logger.error(f"CSVログ保存エラー: {e}")
             return False
-    
+
     @classmethod
     def get_all_interview_records(cls) -> List[Dict[str, Any]]:
         """全ての面接記録を取得"""
         records = []
-        
+
         try:
             for csv_file in CSV_LOG_DIR.glob("interview_log_*.csv"):
                 with open(csv_file, 'r', encoding='utf-8') as file:
@@ -155,20 +155,20 @@ class CSVLogger:
                             "csv_file": str(csv_file.name)
                         }
                         records.append(record)
-        
+
         except Exception as e:
             logger.error(f"面接記録取得エラー: {e}")
-        
+
         records.sort(key=lambda x: x['timestamp'], reverse=True)
         return records
 
 # OpenAI API utilities
 class OpenAIAPIClient:
     """OpenAI API呼び出し管理クラス"""
-    
+
     def __init__(self, api_key: str):
         self.client = openai.AsyncOpenAI(api_key=api_key)
-    
+
     async def send_chat_message(
         self,
         message: str,
@@ -179,12 +179,12 @@ class OpenAIAPIClient:
         dify_conversation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """OpenAI APIにチャットメッセージを送信"""
-        
+
         if interviewer_id == "data_extractor":
             return await self._extract_structured_data(message)
-        
+
         question_data = question_manager.get_question_by_stage(dialogue_count)
-        
+
         if question_data:
             question_content = question_data.get('質問内容', '')
             evaluation_criteria = question_manager.get_evaluation_criteria(question_data)
@@ -192,7 +192,7 @@ class OpenAIAPIClient:
             follow_up = question_manager.get_followup_question(question_data)
             question_id = question_data.get('質問ID', '')
             category = question_data.get('評価カテゴリ', '')
-            
+
             system_prompt = f"""
 あなたは介護施設の面接官「不動」です。施設長として1次面接を担当しています。
 応募者との対話回数: {dialogue_count}
@@ -232,7 +232,7 @@ class OpenAIAPIClient:
 
 対話が6回以上続いた場合は、面接を自然に終了してください。
 """
-        
+
         try:
             response = await self.client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -243,19 +243,19 @@ class OpenAIAPIClient:
                 max_tokens=300,
                 temperature=0.7
             )
-            
+
             ai_response = response.choices[0].message.content
-            
+
             return {
                 "answer": ai_response,
                 "conversation_id": dify_conversation_id or conversation_id,
                 "message_id": str(uuid.uuid4())
             }
-                
+
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
             raise HTTPException(status_code=500, detail="OpenAI API call failed")
-    
+
     async def _extract_structured_data(self, extraction_prompt: str) -> Dict[str, Any]:
         """構造化データ抽出専用メソッド"""
         try:
@@ -263,7 +263,7 @@ class OpenAIAPIClient:
                 model="gpt-4o-mini",
                 messages=[
                     {
-                        "role": "system", 
+                        "role": "system",
                         "content": "あなたは面接データ抽出の専門家です。与えられた面接会話から正確に情報を抽出し、指定されたJSON形式で回答してください。"
                     },
                     {"role": "user", "content": extraction_prompt}
@@ -272,15 +272,15 @@ class OpenAIAPIClient:
                 temperature=0.1,
                 response_format={"type": "json_object"}
             )
-            
+
             ai_response = response.choices[0].message.content
             logger.info(f"OpenAI extraction response: {ai_response}")
-            
+
             return {
                 "answer": ai_response,
                 "message_id": str(uuid.uuid4())
             }
-                
+
         except Exception as e:
             logger.error(f"OpenAI extraction error: {e}")
             return {"answer": "{}", "message_id": str(uuid.uuid4())}
@@ -288,10 +288,10 @@ class OpenAIAPIClient:
 # Session management
 class SessionManager:
     """セッション管理クラス"""
-    
+
     def __init__(self):
         self.conversation_sessions: Dict[str, Any] = {}
-    
+
     def create_session(self, interviewer_id: str) -> str:
         """新しいセッションを作成"""
         session_id = str(uuid.uuid4())
@@ -304,11 +304,11 @@ class SessionManager:
             "created_at": datetime.now(timezone.utc)
         }
         return session_id
-    
+
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """セッションを取得"""
         return self.conversation_sessions.get(session_id)
-    
+
     def update_session(
         self,
         session_id: str,
@@ -320,13 +320,13 @@ class SessionManager:
         session = self.conversation_sessions.get(session_id)
         if not session:
             return
-        
+
         session["dialogue_count"] += 1
         session["stage"] += 1
-        
+
         if dify_conversation_id and not session.get("dify_id"):
             session["dify_id"] = dify_conversation_id
-        
+
         timestamp = datetime.now(timezone.utc).isoformat()
         session["messages"].append({
             "user": user_message,
@@ -347,12 +347,12 @@ INTERVIEWERS: List[Dict[str, Any]] = [
 
 class QuestionManager:
     """CSV質問管理クラス"""
-    
-    def __init__(self, csv_path: str = "interview_questions.csv"):
+
+    def __init__(self, csv_path: str = "enterprise_interview_questions.csv"):
         self.questions = []
         self.csv_path = csv_path
         self.load_questions()
-    
+
     def load_questions(self):
         """CSVファイルから質問を読み込み"""
         try:
@@ -363,24 +363,27 @@ class QuestionManager:
         except Exception as e:
             logger.error(f"質問読み込みエラー: {e}")
             self.questions = []
-    
+
     def get_question_by_stage(self, dialogue_count: int) -> Dict[str, str]:
         """対話回数に基づいて適切な質問を取得"""
-        if dialogue_count == 1:
-            return next((q for q in self.questions if q['質問ID'] == 'INTRO-001'), {})
-        elif dialogue_count == 2:
-            return next((q for q in self.questions if q['質問ID'] == 'PERS-001'), {})
-        elif dialogue_count == 3:
-            return next((q for q in self.questions if q['質問ID'] == 'PERS-002'), {})
-        elif dialogue_count == 4:
-            return next((q for q in self.questions if q['質問ID'] == 'CAREER-001'), {})
-        elif dialogue_count == 5:
-            return next((q for q in self.questions if q['質問ID'] == 'TECH-001'), {})
-        elif dialogue_count == 6:
-            return next((q for q in self.questions if q['質問ID'] == 'MOTI-001'), {})
+        if dialogue_count <= 4:
+            intro_questions = [q for q in self.questions if q['面接段階'] == '導入']
+            if intro_questions and dialogue_count <= len(intro_questions):
+                return intro_questions[dialogue_count - 1]
+            return intro_questions[0] if intro_questions else {}
+        elif dialogue_count <= 10:
+            mid_questions = [q for q in self.questions if q['面接段階'] == '中盤']
+            if mid_questions:
+                index = (dialogue_count - 5) % len(mid_questions)
+                return mid_questions[index]
+            return {}
         else:
-            return next((q for q in self.questions if q['質問ID'] == 'QUEST-001'), {})
-    
+            end_questions = [q for q in self.questions if q['面接段階'] == '終了']
+            if end_questions:
+                index = min(dialogue_count - 11, len(end_questions) - 1)
+                return end_questions[index]
+            return {}
+
     def get_evaluation_criteria(self, question_data: Dict[str, str]) -> str:
         """質問の評価基準を取得"""
         criteria = []
@@ -393,27 +396,27 @@ class QuestionManager:
         if question_data.get('想定回答時間'):
             criteria.append(f"想定回答時間: {question_data['想定回答時間']}")
         return "\n".join(criteria)
-    
+
     def get_ng_words(self, question_data: Dict[str, str]) -> str:
         """NGワードを取得"""
         return question_data.get('NGワード例', '')
-    
+
     def get_followup_question(self, question_data: Dict[str, str]) -> str:
         """フォローアップ質問を取得"""
         return question_data.get('フォローアップ質問', '')
 
 class StructuredDataExtractor:
     """構造化データ抽出クラス"""
-    
+
     @staticmethod
     async def extract_interview_data(conversation_history: List[Dict], openai_client: OpenAIAPIClient) -> Dict[str, Any]:
         """面接データから構造化情報を抽出"""
-        
+
         conversation_text = "\n".join([
-            f"質問: {msg.get('ai', '')}\n回答: {msg.get('user', '')}" 
+            f"質問: {msg.get('ai', '')}\n回答: {msg.get('user', '')}"
             for msg in conversation_history
         ])
-        
+
         extraction_prompt = f"""
 以下の面接会話から、応募者の情報を正確に抽出してください。
 
@@ -435,14 +438,14 @@ class StructuredDataExtractor:
 
 情報が不明な場合は"不明"と記載してください。
 """
-        
+
         try:
             response = await openai_client._extract_structured_data(extraction_prompt)
-            
+
             logger.info(f"OpenAI API response: {response}")
             answer = response.get("answer", "{}")
             logger.info(f"Answer field: {answer}")
-            
+
             start_idx = answer.find('{')
             end_idx = answer.rfind('}') + 1
             if start_idx != -1 and end_idx > start_idx:
@@ -452,31 +455,31 @@ class StructuredDataExtractor:
             else:
                 logger.warning(f"No JSON found in answer: {answer}")
                 extracted_data = {}
-            
+
             return extracted_data
-            
+
         except Exception as e:
             logger.error(f"データ抽出エラー: {e}")
             return {}
 
 class GoogleSheetsService:
     """Google Sheets連携サービス"""
-    
+
     @staticmethod
     async def save_interview_data(conversation_id: str, extracted_data: Dict[str, Any]) -> bool:
         """抽出データをGoogle Sheetsに保存"""
         if not GOOGLE_SERVICE_ACCOUNT_PATH or not SHEET_ID:
             logger.warning("Google Sheets設定が不完全です")
             return False
-        
+
         try:
             credentials = service_account.Credentials.from_service_account_file(
                 GOOGLE_SERVICE_ACCOUNT_PATH,
                 scopes=['https://www.googleapis.com/auth/spreadsheets']
             )
-            
+
             service = build('sheets', 'v4', credentials=credentials)
-            
+
             values = [[
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 conversation_id,
@@ -492,28 +495,28 @@ class GoogleSheetsService:
                 extracted_data.get("quality_score", "0"),
                 extracted_data.get("recommendation", "不可")
             ]]
-            
+
             body = {
                 'values': values
             }
-            
+
             result = service.spreadsheets().values().append(
                 spreadsheetId=SHEET_ID,
                 range='A:K',
                 valueInputOption='USER_ENTERED',
                 body=body
             ).execute()
-            
+
             logger.info(f"Google Sheets保存成功: {result.get('updates', {}).get('updatedRows', 0)}行追加")
             return True
-                
+
         except Exception as e:
             logger.error(f"Google Sheets保存エラー: {e}")
             return False
 
 class InterviewEvaluator:
     """面接評価クラス"""
-    
+
     @staticmethod
     async def evaluate_interview(messages: List[Dict], extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """面接内容を総合評価"""
@@ -529,26 +532,26 @@ class InterviewEvaluator:
                 "weaknesses": [],
                 "recommendations": []
             }
-            
+
             message_count = len(messages)
             if message_count >= 3:
                 evaluation["communication_score"] += 3
             if message_count >= 5:
                 evaluation["communication_score"] += 2
-            
+
             completeness = 0
             if extracted_data.get("name") and extracted_data.get("name") != "不明":
                 completeness += 2
                 evaluation["strengths"].append("名前が明確")
             else:
                 evaluation["weaknesses"].append("名前が不明確")
-                
+
             if extracted_data.get("age") and extracted_data.get("age") != "不明":
                 completeness += 2
                 evaluation["strengths"].append("年齢情報あり")
             else:
                 evaluation["weaknesses"].append("年齢情報なし")
-                
+
             if extracted_data.get("experience") and extracted_data.get("experience") != "不明":
                 completeness += 3
                 evaluation["strengths"].append("職歴情報あり")
@@ -557,7 +560,7 @@ class InterviewEvaluator:
                     evaluation["experience_relevance"] += 3
             else:
                 evaluation["weaknesses"].append("職歴情報不足")
-            
+
             total_response_length = sum(len(msg.get('user', '')) for msg in messages)
             if total_response_length > 100:
                 evaluation["response_quality"] += 3
@@ -566,14 +569,14 @@ class InterviewEvaluator:
                 evaluation["response_quality"] += 2
             else:
                 evaluation["weaknesses"].append("回答が簡潔すぎる")
-            
+
             evaluation["overall_score"] = (
-                evaluation["communication_score"] + 
-                evaluation["experience_relevance"] + 
-                evaluation["response_quality"] + 
+                evaluation["communication_score"] +
+                evaluation["experience_relevance"] +
+                evaluation["response_quality"] +
                 completeness
             )
-            
+
             if evaluation["overall_score"] >= 8:
                 evaluation["interview_readiness"] = "可"
                 evaluation["recommendations"].append("本面接に進行可能")
@@ -583,14 +586,14 @@ class InterviewEvaluator:
             else:
                 evaluation["interview_readiness"] = "不可"
                 evaluation["recommendations"].append("基本情報の再確認が必要")
-            
+
             if evaluation["communication_score"] < 3:
                 evaluation["recommendations"].append("コミュニケーション能力の向上が必要")
             if evaluation["experience_relevance"] < 2:
                 evaluation["recommendations"].append("関連経験の詳細説明が必要")
-            
+
             return evaluation
-            
+
         except Exception as e:
             logger.error(f"面接評価エラー: {e}")
             return {
@@ -630,12 +633,12 @@ async def start_chat(interviewer_id: str):
     interviewer = get_interviewer_by_id(interviewer_id)
     if not interviewer:
         raise HTTPException(status_code=400, detail="Invalid interviewer ID")
-    
+
     session_id = session_manager.create_session(interviewer_id)
     greeting = "準備ができましたら『開始』を押して下さい。音声でも入力可能です。"
-    
+
     logger.info(f"Started new interview session: {session_id} with {interviewer_id}")
-    
+
     return {
         "conversation_id": session_id,
         "greeting": greeting,
@@ -649,12 +652,12 @@ async def send_message(chat_message: ChatMessage):
     session = session_manager.get_session(chat_message.conversation_id)
     if not session:
         raise HTTPException(status_code=400, detail="Invalid conversation ID")
-    
+
     # 2) 面接官情報取得
     interviewer = get_interviewer_by_id(chat_message.interviewer_id)
     if not interviewer:
         raise HTTPException(status_code=400, detail="Invalid interviewer ID")
-    
+
     openai_response = await openai_client.send_chat_message(
         message=chat_message.message,
         interviewer_id=chat_message.interviewer_id,
@@ -663,10 +666,10 @@ async def send_message(chat_message: ChatMessage):
         question_manager=question_manager,
         dify_conversation_id=session.get("dify_id")
     )
-    
+
     # 4) AI応答抽出
     ai_response = extract_ai_response(openai_response)
-    
+
     # 5) セッション更新
     session_manager.update_session(
         session_id=chat_message.conversation_id,
@@ -674,10 +677,10 @@ async def send_message(chat_message: ChatMessage):
         ai_response=ai_response,
         dify_conversation_id=openai_response.get("conversation_id")
     )
-    
+
     # 6) 更新されたセッション情報を取得
     updated_session = session_manager.get_session(chat_message.conversation_id)
-    
+
     if updated_session:
         await CSVLogger.write_interview_log(
             conversation_id=chat_message.conversation_id,
@@ -689,7 +692,7 @@ async def send_message(chat_message: ChatMessage):
             stage=updated_session["stage"]
         )
         
-        if updated_session["dialogue_count"] >= 7:
+        if updated_session["dialogue_count"] >= 12:
             extracted_data = await StructuredDataExtractor.extract_interview_data(
                 updated_session["messages"], openai_client
             )
@@ -699,13 +702,14 @@ async def send_message(chat_message: ChatMessage):
                     chat_message.conversation_id, extracted_data
                 )
                 logger.info(f"構造化データを保存: {extracted_data}")
+    
     else:
         logger.warning(f"セッションが見つかりません: {chat_message.conversation_id}")
-        
+
         csv_records = CSVLogger.get_all_interview_records()
         conversation_messages = [r for r in csv_records if r.get('conversation_id') == chat_message.conversation_id]
         estimated_dialogue_count = len(conversation_messages) + 1
-        
+
         await CSVLogger.write_interview_log(
             conversation_id=chat_message.conversation_id,
             interviewer_id=chat_message.interviewer_id,
@@ -715,10 +719,10 @@ async def send_message(chat_message: ChatMessage):
             dialogue_count=estimated_dialogue_count,
             stage=estimated_dialogue_count
         )
-        
-        if estimated_dialogue_count >= 7:
+
+        if estimated_dialogue_count >= 12:
             logger.info(f"CSVベースでGoogle Sheets保存をトリガー: {estimated_dialogue_count}メッセージ")
-            
+
             all_messages = []
             for record in conversation_messages:
                 all_messages.append({
@@ -726,13 +730,13 @@ async def send_message(chat_message: ChatMessage):
                     "ai": record.get('ai_response', ''),
                     "timestamp": record.get('timestamp', '')
                 })
-            
+
             all_messages.append({
                 "user": chat_message.message,
                 "ai": ai_response,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
-            
+
             extracted_data = await StructuredDataExtractor.extract_interview_data(
                 all_messages, openai_client
             )
@@ -742,9 +746,9 @@ async def send_message(chat_message: ChatMessage):
                     chat_message.conversation_id, extracted_data
                 )
                 logger.info(f"CSVベース構造化データを保存: {extracted_data}")
-        
+
         updated_session = {"stage": estimated_dialogue_count}
-    
+
     # 8) レスポンス返却
     return ChatResponse(
         response=ai_response,
@@ -762,20 +766,20 @@ async def upload_recording(
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"{conversation_id}_{timestamp}.webm"
         file_path = VIDEO_STORAGE_DIR / filename
-        
+
         # ファイルを保存
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
-        
+
         logger.info(f"録画ファイルを保存: {file_path}")
-        
+
         return {
             "success": True,
             "filename": filename,
             "file_path": str(file_path)
         }
-    
+
     except Exception as e:
         logger.error(f"録画アップロードエラー: {e}")
         raise HTTPException(status_code=500, detail="録画ファイルのアップロードに失敗しました")
@@ -785,14 +789,14 @@ async def get_interview_records():
     """面接記録一覧を取得"""
     try:
         records = CSVLogger.get_all_interview_records()
-        
+
         conversation_groups = {}
         for record in records:
             conv_id = record['conversation_id']
             if conv_id not in conversation_groups:
                 recording_files = list(VIDEO_STORAGE_DIR.glob(f"{conv_id}_*.webm"))
                 has_recording = len(recording_files) > 0
-                
+
                 conversation_groups[conv_id] = {
                     "id": conv_id,
                     "timestamp": record['timestamp'],
@@ -806,9 +810,9 @@ async def get_interview_records():
                 }
             conversation_groups[conv_id]["user_messages"] += 1
             conversation_groups[conv_id]["ai_responses"] += 1
-        
+
         return list(conversation_groups.values())
-    
+
     except Exception as e:
         logger.error(f"面接記録取得エラー: {e}")
         raise HTTPException(status_code=500, detail="面接記録の取得に失敗しました")
@@ -818,18 +822,18 @@ async def download_recording(record_id: str):
     """録画ファイルをダウンロード"""
     try:
         recording_files = list(VIDEO_STORAGE_DIR.glob(f"{record_id}_*.webm"))
-        
+
         if not recording_files:
             raise HTTPException(status_code=404, detail="録画ファイルが見つかりません")
-        
+
         recording_file = max(recording_files, key=lambda f: f.stat().st_mtime)
-        
+
         return FileResponse(
             path=str(recording_file),
             filename=f"interview_{record_id}.webm",
             media_type="video/webm"
         )
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -841,16 +845,16 @@ async def download_csv(csv_filename: str):
     """CSVファイルをダウンロード"""
     try:
         csv_file_path = CSV_LOG_DIR / csv_filename
-        
+
         if not csv_file_path.exists():
             raise HTTPException(status_code=404, detail="CSVファイルが見つかりません")
-        
+
         return FileResponse(
             path=str(csv_file_path),
             filename=csv_filename,
             media_type="text/csv"
         )
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -864,17 +868,17 @@ async def get_extracted_data(conversation_id: str):
         session = session_manager.get_session(conversation_id)
         if not session:
             raise HTTPException(status_code=404, detail="セッションが見つかりません")
-        
+
         extracted_data = await StructuredDataExtractor.extract_interview_data(
             session["messages"], openai_client
         )
-        
+
         return {
             "conversation_id": conversation_id,
             "extracted_data": extracted_data,
             "timestamp": datetime.now().isoformat()
         }
-        
+
     except Exception as e:
         logger.error(f"抽出データ取得エラー: {e}")
         raise HTTPException(status_code=500, detail="データ取得に失敗しました")
@@ -884,11 +888,11 @@ async def get_all_extracted_data():
     """全CSVログから構造化データを抽出・評価"""
     try:
         all_results = []
-        
+
         for csv_file in os.listdir(CSV_LOG_DIR):
             if csv_file.startswith("interview_log_") and csv_file.endswith(".csv"):
                 csv_path = os.path.join(CSV_LOG_DIR, csv_file)
-                
+
                 conversations = {}
                 with open(csv_path, 'r', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
@@ -901,24 +905,24 @@ async def get_all_extracted_data():
                                 'start_time': row['タイムスタンプ'],
                                 'messages': []
                             }
-                        
+
                         conversations[conv_id]['messages'].append({
                             'user': row['ユーザーメッセージ'],
                             'ai': row['AI応答'],
                             'timestamp': row['タイムスタンプ'],
                             'dialogue_count': int(row['対話回数'])
                         })
-                
+
                 for conv_id, conv_data in conversations.items():
                     if len(conv_data['messages']) >= 6:  # 6回以上の対話がある場合のみ
                         extracted_data = await StructuredDataExtractor.extract_interview_data(
                             conv_data['messages'], openai_client
                         )
-                        
+
                         evaluation = await InterviewEvaluator.evaluate_interview(
                             conv_data['messages'], extracted_data
                         )
-                        
+
                         all_results.append({
                             'conversation_id': conv_id,
                             'interviewer_name': conv_data['interviewer_name'],
@@ -928,13 +932,13 @@ async def get_all_extracted_data():
                             'evaluation': evaluation,
                             'csv_file': csv_file
                         })
-        
+
         return {
             "total_interviews": len(all_results),
             "extraction_timestamp": datetime.now().isoformat(),
             "results": all_results
         }
-        
+
     except Exception as e:
         logger.error(f"全データ抽出エラー: {e}")
         raise HTTPException(status_code=500, detail="全データ抽出に失敗しました")
@@ -952,8 +956,8 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "main:app", 
+        "main:app",
         host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000)), 
+        port=int(os.getenv("PORT", 8000)),
         reload=True
     )
