@@ -373,6 +373,94 @@ class GoogleSheetsService:
             logger.error(f"Google Sheets保存エラー: {e}")
             return False
 
+class InterviewEvaluator:
+    """面接評価クラス"""
+    
+    @staticmethod
+    async def evaluate_interview(messages: List[Dict], extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+        """面接内容を総合評価"""
+        try:
+            evaluation = {
+                "overall_score": 0,
+                "communication_score": 0,
+                "experience_relevance": 0,
+                "motivation_level": 0,
+                "response_quality": 0,
+                "interview_readiness": "不可",
+                "strengths": [],
+                "weaknesses": [],
+                "recommendations": []
+            }
+            
+            message_count = len(messages)
+            if message_count >= 3:
+                evaluation["communication_score"] += 3
+            if message_count >= 5:
+                evaluation["communication_score"] += 2
+            
+            completeness = 0
+            if extracted_data.get("name") and extracted_data.get("name") != "不明":
+                completeness += 2
+                evaluation["strengths"].append("名前が明確")
+            else:
+                evaluation["weaknesses"].append("名前が不明確")
+                
+            if extracted_data.get("age") and extracted_data.get("age") != "不明":
+                completeness += 2
+                evaluation["strengths"].append("年齢情報あり")
+            else:
+                evaluation["weaknesses"].append("年齢情報なし")
+                
+            if extracted_data.get("experience") and extracted_data.get("experience") != "不明":
+                completeness += 3
+                evaluation["strengths"].append("職歴情報あり")
+                exp_text = extracted_data.get("experience", "").lower()
+                if any(keyword in exp_text for keyword in ["年", "経験", "勤務"]):
+                    evaluation["experience_relevance"] += 3
+            else:
+                evaluation["weaknesses"].append("職歴情報不足")
+            
+            total_response_length = sum(len(msg.get('user', '')) for msg in messages)
+            if total_response_length > 100:
+                evaluation["response_quality"] += 3
+                evaluation["strengths"].append("詳細な回答")
+            elif total_response_length > 50:
+                evaluation["response_quality"] += 2
+            else:
+                evaluation["weaknesses"].append("回答が簡潔すぎる")
+            
+            evaluation["overall_score"] = (
+                evaluation["communication_score"] + 
+                evaluation["experience_relevance"] + 
+                evaluation["response_quality"] + 
+                completeness
+            )
+            
+            if evaluation["overall_score"] >= 8:
+                evaluation["interview_readiness"] = "可"
+                evaluation["recommendations"].append("本面接に進行可能")
+            elif evaluation["overall_score"] >= 5:
+                evaluation["interview_readiness"] = "要検討"
+                evaluation["recommendations"].append("追加質問後に判定")
+            else:
+                evaluation["interview_readiness"] = "不可"
+                evaluation["recommendations"].append("基本情報の再確認が必要")
+            
+            if evaluation["communication_score"] < 3:
+                evaluation["recommendations"].append("コミュニケーション能力の向上が必要")
+            if evaluation["experience_relevance"] < 2:
+                evaluation["recommendations"].append("関連経験の詳細説明が必要")
+            
+            return evaluation
+            
+        except Exception as e:
+            logger.error(f"面接評価エラー: {e}")
+            return {
+                "overall_score": 0,
+                "interview_readiness": "評価不可",
+                "error": str(e)
+            }
+
 # Initialize services
 dify_client = DifyAPIClient(DIFY_API_URL, DIFY_API_KEY)
 session_manager = SessionManager()
@@ -605,6 +693,66 @@ async def get_extracted_data(conversation_id: str):
     except Exception as e:
         logger.error(f"抽出データ取得エラー: {e}")
         raise HTTPException(status_code=500, detail="データ取得に失敗しました")
+
+@app.get("/api/admin/all-extracted-data")
+async def get_all_extracted_data():
+    """全CSVログから構造化データを抽出・評価"""
+    try:
+        all_results = []
+        
+        for csv_file in os.listdir(CSV_LOG_DIR):
+            if csv_file.startswith("interview_log_") and csv_file.endswith(".csv"):
+                csv_path = os.path.join(CSV_LOG_DIR, csv_file)
+                
+                conversations = {}
+                with open(csv_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        conv_id = row['会話ID']
+                        if conv_id not in conversations:
+                            conversations[conv_id] = {
+                                'conversation_id': conv_id,
+                                'interviewer_name': row['面接官名'],
+                                'start_time': row['タイムスタンプ'],
+                                'messages': []
+                            }
+                        
+                        conversations[conv_id]['messages'].append({
+                            'user': row['ユーザーメッセージ'],
+                            'ai': row['AI応答'],
+                            'timestamp': row['タイムスタンプ'],
+                            'dialogue_count': int(row['対話回数'])
+                        })
+                
+                for conv_id, conv_data in conversations.items():
+                    if len(conv_data['messages']) >= 3:  # 3回以上の対話がある場合のみ
+                        extracted_data = await StructuredDataExtractor.extract_interview_data(
+                            conv_data['messages'], dify_client
+                        )
+                        
+                        evaluation = await InterviewEvaluator.evaluate_interview(
+                            conv_data['messages'], extracted_data
+                        )
+                        
+                        all_results.append({
+                            'conversation_id': conv_id,
+                            'interviewer_name': conv_data['interviewer_name'],
+                            'start_time': conv_data['start_time'],
+                            'message_count': len(conv_data['messages']),
+                            'extracted_data': extracted_data,
+                            'evaluation': evaluation,
+                            'csv_file': csv_file
+                        })
+        
+        return {
+            "total_interviews": len(all_results),
+            "extraction_timestamp": datetime.now().isoformat(),
+            "results": all_results
+        }
+        
+    except Exception as e:
+        logger.error(f"全データ抽出エラー: {e}")
+        raise HTTPException(status_code=500, detail="全データ抽出に失敗しました")
 
 @app.get("/health")
 async def health_check():
