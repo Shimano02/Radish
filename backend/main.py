@@ -315,13 +315,18 @@ class StructuredDataExtractor:
                 dialogue_count=1
             )
             
+            logger.info(f"Dify API response: {response}")
             answer = response.get("answer", "{}")
+            logger.info(f"Answer field: {answer}")
+            
             start_idx = answer.find('{')
             end_idx = answer.rfind('}') + 1
             if start_idx != -1 and end_idx > start_idx:
                 json_str = answer[start_idx:end_idx]
+                logger.info(f"Extracted JSON string: {json_str}")
                 extracted_data = json.loads(json_str)
             else:
+                logger.warning(f"No JSON found in answer: {answer}")
                 extracted_data = {}
             
             return extracted_data
