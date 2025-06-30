@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
+import openai
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -158,13 +159,12 @@ class CSVLogger:
         records.sort(key=lambda x: x['timestamp'], reverse=True)
         return records
 
-# Dify API utilities
-class DifyAPIClient:
-    """Dify API呼び出し管理クラス"""
+# OpenAI API utilities
+class OpenAIAPIClient:
+    """OpenAI API呼び出し管理クラス"""
     
-    def __init__(self, api_url: str, api_key: str):
-        self.api_url = api_url
-        self.api_key = api_key
+    def __init__(self, api_key: str):
+        self.client = openai.AsyncOpenAI(api_key=api_key)
     
     async def send_chat_message(
         self,
@@ -174,42 +174,75 @@ class DifyAPIClient:
         dialogue_count: int,
         dify_conversation_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Dify APIにチャットメッセージを送信"""
-        payload = {
-            "inputs": {
-                "user_message": message,
-                "interviewer_type": interviewer_id,
-                "dialogue_count": dialogue_count
-            },
-            "query": message,
-            "user": conversation_id,
-            "stream": False
-        }
+        """OpenAI APIにチャットメッセージを送信"""
         
-        if dify_conversation_id:
-            payload["conversation_id"] = dify_conversation_id
+        if interviewer_id == "data_extractor":
+            return await self._extract_structured_data(message)
         
-        logger.info(f"Calling Dify API with payload: {payload}")
+        system_prompt = f"""
+あなたは介護施設の面接官「不動」です。施設長として1次面接を担当しています。
+応募者との対話回数: {dialogue_count}
+
+以下の特徴で面接を進めてください：
+- 親しみやすく、でも真剣な態度
+- 介護業界特有の現実的な質問（夜勤、体力的負担、利用者対応など）
+- 応募者の経験や人柄を引き出す質問
+- 簡潔で分かりやすい日本語
+
+対話が3回以上続いた場合は、面接を自然に終了してください。
+"""
         
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    f"{self.api_url}/chat-messages",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json=payload
-                )
-                response.raise_for_status()
-                return response.json()
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message}
+                ],
+                max_tokens=300,
+                temperature=0.7
+            )
+            
+            ai_response = response.choices[0].message.content
+            
+            return {
+                "answer": ai_response,
+                "conversation_id": dify_conversation_id or conversation_id,
+                "message_id": str(uuid.uuid4())
+            }
                 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Dify API error {e.response.status_code}: {e.response.text}")
-            raise HTTPException(status_code=502, detail="Error from Dify API")
         except Exception as e:
-            logger.error(f"Unexpected Dify API error: {e}")
-            raise HTTPException(status_code=500, detail="Dify API call failed")
+            logger.error(f"OpenAI API error: {e}")
+            raise HTTPException(status_code=500, detail="OpenAI API call failed")
+    
+    async def _extract_structured_data(self, extraction_prompt: str) -> Dict[str, Any]:
+        """構造化データ抽出専用メソッド"""
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": "あなたは面接データ抽出の専門家です。与えられた面接会話から正確に情報を抽出し、指定されたJSON形式で回答してください。"
+                    },
+                    {"role": "user", "content": extraction_prompt}
+                ],
+                max_tokens=500,
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+            
+            ai_response = response.choices[0].message.content
+            logger.info(f"OpenAI extraction response: {ai_response}")
+            
+            return {
+                "answer": ai_response,
+                "message_id": str(uuid.uuid4())
+            }
+                
+        except Exception as e:
+            logger.error(f"OpenAI extraction error: {e}")
+            return {"answer": "{}", "message_id": str(uuid.uuid4())}
 
 # Session management
 class SessionManager:
@@ -277,7 +310,7 @@ class StructuredDataExtractor:
     """構造化データ抽出クラス"""
     
     @staticmethod
-    async def extract_interview_data(conversation_history: List[Dict], dify_client: DifyAPIClient) -> Dict[str, Any]:
+    async def extract_interview_data(conversation_history: List[Dict], openai_client: OpenAIAPIClient) -> Dict[str, Any]:
         """面接データから構造化情報を抽出"""
         
         conversation_text = "\n".join([
@@ -308,14 +341,9 @@ class StructuredDataExtractor:
 """
         
         try:
-            response = await dify_client.send_chat_message(
-                message=extraction_prompt,
-                interviewer_id="data_extractor",
-                conversation_id="extraction_session",
-                dialogue_count=1
-            )
+            response = await openai_client._extract_structured_data(extraction_prompt)
             
-            logger.info(f"Dify API response: {response}")
+            logger.info(f"OpenAI API response: {response}")
             answer = response.get("answer", "{}")
             logger.info(f"Answer field: {answer}")
             
@@ -467,7 +495,8 @@ class InterviewEvaluator:
             }
 
 # Initialize services
-dify_client = DifyAPIClient(DIFY_API_URL, DIFY_API_KEY)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai_client = OpenAIAPIClient(OPENAI_API_KEY)
 session_manager = SessionManager()
 
 # Helper functions
@@ -520,8 +549,7 @@ async def send_message(chat_message: ChatMessage):
     if not interviewer:
         raise HTTPException(status_code=400, detail="Invalid interviewer ID")
     
-    # 3) Dify API 呼び出し
-    dify_response = await dify_client.send_chat_message(
+    openai_response = await openai_client.send_chat_message(
         message=chat_message.message,
         interviewer_id=chat_message.interviewer_id,
         conversation_id=chat_message.conversation_id,
@@ -530,14 +558,14 @@ async def send_message(chat_message: ChatMessage):
     )
     
     # 4) AI応答抽出
-    ai_response = extract_ai_response(dify_response)
+    ai_response = extract_ai_response(openai_response)
     
     # 5) セッション更新
     session_manager.update_session(
         session_id=chat_message.conversation_id,
         user_message=chat_message.message,
         ai_response=ai_response,
-        dify_conversation_id=dify_response.get("conversation_id")
+        dify_conversation_id=openai_response.get("conversation_id")
     )
     
     # 6) 更新されたセッション情報を取得
@@ -556,7 +584,7 @@ async def send_message(chat_message: ChatMessage):
         
         if updated_session["dialogue_count"] >= 3:
             extracted_data = await StructuredDataExtractor.extract_interview_data(
-                updated_session["messages"], dify_client
+                updated_session["messages"], openai_client
             )
             
             if extracted_data:
@@ -686,7 +714,7 @@ async def get_extracted_data(conversation_id: str):
             raise HTTPException(status_code=404, detail="セッションが見つかりません")
         
         extracted_data = await StructuredDataExtractor.extract_interview_data(
-            session["messages"], dify_client
+            session["messages"], openai_client
         )
         
         return {
@@ -732,7 +760,7 @@ async def get_all_extracted_data():
                 for conv_id, conv_data in conversations.items():
                     if len(conv_data['messages']) >= 3:  # 3回以上の対話がある場合のみ
                         extracted_data = await StructuredDataExtractor.extract_interview_data(
-                            conv_data['messages'], dify_client
+                            conv_data['messages'], openai_client
                         )
                         
                         evaluation = await InterviewEvaluator.evaluate_interview(
