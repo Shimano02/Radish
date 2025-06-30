@@ -404,7 +404,7 @@ class GoogleSheetsService:
             
             result = service.spreadsheets().values().append(
                 spreadsheetId=SHEET_ID,
-                range='面接データ!A:K',
+                range='A:K',
                 valueInputOption='USER_ENTERED',
                 body=body
             ).execute()
