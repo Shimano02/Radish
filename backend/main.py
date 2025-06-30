@@ -175,7 +175,7 @@ class OpenAIAPIClient:
         interviewer_id: str,
         conversation_id: str,
         dialogue_count: int,
-        question_manager: 'QuestionManager',
+        question_manager: 'GoogleSheetsQuestionManager',
         dify_conversation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """OpenAI APIにチャットメッセージを送信"""
@@ -186,12 +186,12 @@ class OpenAIAPIClient:
         question_data = question_manager.get_question_by_stage(dialogue_count)
 
         if question_data:
-            question_content = question_data.get('質問内容', '')
+            question_content = question_data.get('Question', '')
             evaluation_criteria = question_manager.get_evaluation_criteria(question_data)
             ng_words = question_manager.get_ng_words(question_data)
             follow_up = question_manager.get_followup_question(question_data)
-            question_id = question_data.get('質問ID', '')
-            category = question_data.get('評価カテゴリ', '')
+            question_id = question_data.get('ID', '')
+            category = question_data.get('Category', '')
 
             system_prompt = f"""
 あなたは介護施設の面接官「不動」です。施設長として1次面接を担当しています。
@@ -345,65 +345,117 @@ INTERVIEWERS: List[Dict[str, Any]] = [
     }
 ]
 
-class QuestionManager:
-    """CSV質問管理クラス"""
+class GoogleSheetsQuestionManager:
+    """Google Sheets質問管理クラス"""
 
-    def __init__(self, csv_path: str = "enterprise_interview_questions.csv"):
+    def __init__(self, spreadsheet_id: str):
+        self.spreadsheet_id = spreadsheet_id
         self.questions = []
-        self.csv_path = csv_path
-        self.load_questions()
+        self.evaluation_criteria = []
+        self.ng_words = []
+        self.interview_flow = []
+        self.overall_evaluation = []
+        self.load_all_data()
 
-    def load_questions(self):
-        """CSVファイルから質問を読み込み"""
+    def load_all_data(self):
+        """Google Sheetsから全データを読み込み"""
         try:
-            with open(self.csv_path, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                self.questions = [row for row in reader if row.get('質問内容')]
-            logger.info(f"質問を{len(self.questions)}件読み込みました")
+            credentials = service_account.Credentials.from_service_account_file(
+                GOOGLE_SERVICE_ACCOUNT_PATH,
+                scopes=['https://www.googleapis.com/auth/spreadsheets']
+            )
+            service = build('sheets', 'v4', credentials=credentials)
+            
+            questions_result = service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range='BasicQuestions!A:Z'
+            ).execute()
+            questions_values = questions_result.get('values', [])
+            if questions_values:
+                headers = questions_values[0]
+                self.questions = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in questions_values[1:]]
+            
+            eval_result = service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range='EvaluationCriteria!A:Z'
+            ).execute()
+            eval_values = eval_result.get('values', [])
+            if eval_values:
+                headers = eval_values[0]
+                self.evaluation_criteria = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in eval_values[1:]]
+            
+            ng_result = service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range='NGWords!A:Z'
+            ).execute()
+            ng_values = ng_result.get('values', [])
+            if ng_values:
+                headers = ng_values[0]
+                self.ng_words = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in ng_values[1:]]
+            
+            flow_result = service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range='InterviewFlow!A:Z'
+            ).execute()
+            flow_values = flow_result.get('values', [])
+            if flow_values:
+                headers = flow_values[0]
+                self.interview_flow = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in flow_values[1:]]
+            
+            logger.info(f"Google Sheetsから質問{len(self.questions)}件、評価基準{len(self.evaluation_criteria)}件を読み込みました")
+            
         except Exception as e:
-            logger.error(f"質問読み込みエラー: {e}")
-            self.questions = []
+            logger.error(f"Google Sheetsデータ読み込みエラー: {e}")
 
     def get_question_by_stage(self, dialogue_count: int) -> Dict[str, str]:
         """対話回数に基づいて適切な質問を取得"""
-        if dialogue_count <= 4:
-            intro_questions = [q for q in self.questions if q['面接段階'] == '導入']
-            if intro_questions and dialogue_count <= len(intro_questions):
-                return intro_questions[dialogue_count - 1]
-            return intro_questions[0] if intro_questions else {}
-        elif dialogue_count <= 10:
-            mid_questions = [q for q in self.questions if q['面接段階'] == '中盤']
-            if mid_questions:
-                index = (dialogue_count - 5) % len(mid_questions)
-                return mid_questions[index]
+        if not self.questions:
             return {}
+        
+        intro_questions = [q for q in self.questions if '自己紹介' in q.get('Category', '')]
+        experience_questions = [q for q in self.questions if '職歴' in q.get('Category', '') or '経験' in q.get('Category', '')]
+        motivation_questions = [q for q in self.questions if '志望' in q.get('Category', '')]
+        skill_questions = [q for q in self.questions if '強み' in q.get('Category', '') or 'スキル' in q.get('Category', '')]
+        other_questions = [q for q in self.questions if q not in intro_questions + experience_questions + motivation_questions + skill_questions]
+        
+        if dialogue_count <= 2:
+            return intro_questions[0] if intro_questions else self.questions[0]
+        elif dialogue_count <= 5:
+            index = (dialogue_count - 3) % len(experience_questions) if experience_questions else 0
+            return experience_questions[index] if experience_questions else self.questions[1] if len(self.questions) > 1 else self.questions[0]
+        elif dialogue_count <= 8:
+            index = (dialogue_count - 6) % len(motivation_questions) if motivation_questions else 0
+            return motivation_questions[index] if motivation_questions else self.questions[2] if len(self.questions) > 2 else self.questions[0]
+        elif dialogue_count <= 11:
+            index = (dialogue_count - 9) % len(skill_questions) if skill_questions else 0
+            return skill_questions[index] if skill_questions else self.questions[3] if len(self.questions) > 3 else self.questions[0]
         else:
-            end_questions = [q for q in self.questions if q['面接段階'] == '終了']
-            if end_questions:
-                index = min(dialogue_count - 11, len(end_questions) - 1)
-                return end_questions[index]
-            return {}
+            index = (dialogue_count - 12) % len(other_questions) if other_questions else 0
+            return other_questions[index] if other_questions else self.questions[-1]
 
     def get_evaluation_criteria(self, question_data: Dict[str, str]) -> str:
         """質問の評価基準を取得"""
+        if not self.evaluation_criteria:
+            return ""
+        
         criteria = []
-        if question_data.get('評価ポイント'):
-            criteria.append(f"評価ポイント: {question_data['評価ポイント']}")
-        if question_data.get('評価基準'):
-            criteria.append(f"評価基準: {question_data['評価基準']}")
-        if question_data.get('重要度'):
-            criteria.append(f"重要度: {question_data['重要度']}")
-        if question_data.get('想定回答時間'):
-            criteria.append(f"想定回答時間: {question_data['想定回答時間']}")
+        for criterion in self.evaluation_criteria:
+            criteria.append(f"{criterion.get('Evaluation_Item', '')}: {criterion.get('Description', '')}")
         return "\n".join(criteria)
 
     def get_ng_words(self, question_data: Dict[str, str]) -> str:
         """NGワードを取得"""
-        return question_data.get('NGワード例', '')
+        if not self.ng_words:
+            return ""
+        
+        ng_examples = []
+        for ng_item in self.ng_words:
+            ng_examples.append(f"{ng_item.get('Category', '')}: {ng_item.get('NG_Examples', '')}")
+        return "\n".join(ng_examples)
 
     def get_followup_question(self, question_data: Dict[str, str]) -> str:
         """フォローアップ質問を取得"""
-        return question_data.get('フォローアップ質問', '')
+        return question_data.get('Follow_Up', '')
 
 class StructuredDataExtractor:
     """構造化データ抽出クラス"""
@@ -483,6 +535,9 @@ class GoogleSheetsService:
             values = [[
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 conversation_id,
+                "面接完了",
+                "",
+                f"評価結果: {extracted_data.get('recommendation', '不可')}",
                 extracted_data.get("name", "不明"),
                 extracted_data.get("age", "不明"),
                 extracted_data.get("experience", "不明"),
@@ -493,7 +548,8 @@ class GoogleSheetsService:
                 extracted_data.get("problem_solving", "不明"),
                 extracted_data.get("completeness_score", "0"),
                 extracted_data.get("quality_score", "0"),
-                extracted_data.get("recommendation", "不可")
+                extracted_data.get("recommendation", "不可"),
+                extracted_data.get("recording_url", "")
             ]]
 
             body = {
@@ -502,7 +558,7 @@ class GoogleSheetsService:
 
             result = service.spreadsheets().values().append(
                 spreadsheetId=SHEET_ID,
-                range='A:K',
+                range='logs!A:Q',
                 valueInputOption='USER_ENTERED',
                 body=body
             ).execute()
@@ -512,6 +568,47 @@ class GoogleSheetsService:
 
         except Exception as e:
             logger.error(f"Google Sheets保存エラー: {e}")
+            return False
+
+    @staticmethod
+    async def save_qa_log(conversation_id: str, question: str, answer: str, evaluation: str = "") -> bool:
+        """Q&Aログをlogsシートに保存"""
+        if not GOOGLE_SERVICE_ACCOUNT_PATH or not SHEET_ID:
+            logger.warning("Google Sheets設定が不完全です")
+            return False
+
+        try:
+            credentials = service_account.Credentials.from_service_account_file(
+                GOOGLE_SERVICE_ACCOUNT_PATH,
+                scopes=['https://www.googleapis.com/auth/spreadsheets']
+            )
+
+            service = build('sheets', 'v4', credentials=credentials)
+
+            values = [[
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                conversation_id,
+                question,
+                answer,
+                evaluation
+            ]]
+
+            body = {
+                'values': values
+            }
+
+            result = service.spreadsheets().values().append(
+                spreadsheetId=SHEET_ID,
+                range='logs!A:E',
+                valueInputOption='USER_ENTERED',
+                body=body
+            ).execute()
+
+            logger.info(f"Q&Aログ保存成功: {conversation_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Q&Aログ保存エラー: {e}")
             return False
 
 class InterviewEvaluator:
@@ -606,7 +703,7 @@ class InterviewEvaluator:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAIAPIClient(OPENAI_API_KEY)
 session_manager = SessionManager()
-question_manager = QuestionManager()
+question_manager = GoogleSheetsQuestionManager(SHEET_ID)
 
 # Helper functions
 def get_interviewer_by_id(interviewer_id: str) -> Optional[Dict[str, Any]]:
@@ -682,6 +779,14 @@ async def send_message(chat_message: ChatMessage):
     updated_session = session_manager.get_session(chat_message.conversation_id)
 
     if updated_session:
+        question_data = question_manager.get_question_by_stage(updated_session["dialogue_count"])
+        question_text = question_data.get('Question', '')
+        await GoogleSheetsService.save_qa_log(
+            chat_message.conversation_id,
+            question_text,
+            chat_message.message
+        )
+        
         await CSVLogger.write_interview_log(
             conversation_id=chat_message.conversation_id,
             interviewer_id=chat_message.interviewer_id,
@@ -771,6 +876,33 @@ async def upload_recording(
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
+
+        recording_url = f"/api/admin/recording/{conversation_id}"
+        try:
+            credentials = service_account.Credentials.from_service_account_file(
+                GOOGLE_SERVICE_ACCOUNT_PATH,
+                scopes=['https://www.googleapis.com/auth/spreadsheets']
+            )
+            service = build('sheets', 'v4', credentials=credentials)
+            
+            values = [[
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                conversation_id,
+                "録画完了",
+                "",
+                f"録画ファイル: {recording_url}"
+            ]]
+            
+            body = {'values': values}
+            service.spreadsheets().values().append(
+                spreadsheetId=SHEET_ID,
+                range='logs!A:E',
+                valueInputOption='USER_ENTERED',
+                body=body
+            ).execute()
+            
+        except Exception as e:
+            logger.error(f"録画URL保存エラー: {e}")
 
         logger.info(f"録画ファイルを保存: {file_path}")
 

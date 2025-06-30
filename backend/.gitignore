@@ -130,6 +130,22 @@ dmypy.json
 
 # Google Service Account credentials
 google_service_account.json
+
+# Video recordings
+video_recordings/
+*.webm
+*.mp4
+
+# Interview logs
+interview_logs/
+*.csv
+
+# Excel files
+*.xlsx
+*.xls
+
+# Google Service Account credentials
+google_service_account.json
 *.json
 
 # Test files
