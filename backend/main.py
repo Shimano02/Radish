@@ -691,7 +691,7 @@ async def send_message(chat_message: ChatMessage):
             stage=updated_session["stage"]
         )
         
-        if updated_session["dialogue_count"] >= 6:
+        if updated_session["dialogue_count"] >= 7:
             extracted_data = await StructuredDataExtractor.extract_interview_data(
                 updated_session["messages"], openai_client
             )
