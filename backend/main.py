@@ -346,66 +346,74 @@ INTERVIEWERS: List[Dict[str, Any]] = [
 ]
 
 class GoogleSheetsQuestionManager:
-    """Google Sheets質問管理クラス"""
+    """Google Sheets質問管理クラス - メモリ最適化版"""
 
     def __init__(self, spreadsheet_id: str):
         self.spreadsheet_id = spreadsheet_id
-        self.questions = []
-        self.evaluation_criteria = []
-        self.ng_words = []
-        self.interview_flow = []
-        self.overall_evaluation = []
-        self.load_all_data()
+        self._questions_cache = None
+        self._evaluation_criteria_cache = None
+        self._ng_words_cache = None
+        self._interview_flow_cache = None
+        self._service = None
 
-    def load_all_data(self):
-        """Google Sheetsから全データを読み込み"""
-        try:
+    def _get_service(self):
+        """Google Sheets APIサービスを取得（遅延初期化）"""
+        if self._service is None:
             credentials = service_account.Credentials.from_service_account_file(
                 GOOGLE_SERVICE_ACCOUNT_PATH,
                 scopes=['https://www.googleapis.com/auth/spreadsheets']
             )
-            service = build('sheets', 'v4', credentials=credentials)
-            
-            questions_result = service.spreadsheets().values().get(
+            self._service = build('sheets', 'v4', credentials=credentials)
+        return self._service
+
+    def _load_sheet_data(self, sheet_name: str, cache_attr: str):
+        """指定されたシートのデータを読み込み（キャッシュ付き）"""
+        cached_data = getattr(self, cache_attr)
+        if cached_data is not None:
+            return cached_data
+
+        try:
+            service = self._get_service()
+            result = service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range='BasicQuestions!A:Z'
+                range=f'{sheet_name}!A:Z'
             ).execute()
-            questions_values = questions_result.get('values', [])
-            if questions_values:
-                headers = questions_values[0]
-                self.questions = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in questions_values[1:]]
+            values = result.get('values', [])
             
-            eval_result = service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range='EvaluationCriteria!A:Z'
-            ).execute()
-            eval_values = eval_result.get('values', [])
-            if eval_values:
-                headers = eval_values[0]
-                self.evaluation_criteria = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in eval_values[1:]]
+            if values:
+                headers = values[0]
+                data = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in values[1:]]
+            else:
+                data = []
             
-            ng_result = service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range='NGWords!A:Z'
-            ).execute()
-            ng_values = ng_result.get('values', [])
-            if ng_values:
-                headers = ng_values[0]
-                self.ng_words = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in ng_values[1:]]
-            
-            flow_result = service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range='InterviewFlow!A:Z'
-            ).execute()
-            flow_values = flow_result.get('values', [])
-            if flow_values:
-                headers = flow_values[0]
-                self.interview_flow = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in flow_values[1:]]
-            
-            logger.info(f"Google Sheetsから質問{len(self.questions)}件、評価基準{len(self.evaluation_criteria)}件を読み込みました")
+            setattr(self, cache_attr, data)
+            logger.info(f"Google Sheets {sheet_name}から{len(data)}件のデータを読み込みました")
+            return data
             
         except Exception as e:
-            logger.error(f"Google Sheetsデータ読み込みエラー: {e}")
+            logger.error(f"Google Sheets {sheet_name}データ読み込みエラー: {e}")
+            setattr(self, cache_attr, [])
+            return []
+
+    @property
+    def questions(self):
+        """質問データを取得（遅延読み込み）"""
+        return self._load_sheet_data('BasicQuestions', '_questions_cache')
+
+    @property
+    def evaluation_criteria(self):
+        """評価基準データを取得（遅延読み込み）"""
+        return self._load_sheet_data('EvaluationCriteria', '_evaluation_criteria_cache')
+
+    @property
+    def ng_words(self):
+        """NGワードデータを取得（遅延読み込み）"""
+        return self._load_sheet_data('NGWords', '_ng_words_cache')
+
+    @property
+    def interview_flow(self):
+        """面接フローデータを取得（遅延読み込み）"""
+        return self._load_sheet_data('InterviewFlow', '_interview_flow_cache')
 
     def get_question_by_stage(self, dialogue_count: int) -> Dict[str, str]:
         """対話回数に基づいて適切な質問を取得"""
