@@ -45,16 +45,20 @@ VIDEO_STORAGE_DIR.mkdir(exist_ok=True)
 
 # FastAPI setup
 app = FastAPI(title="AI Interviewer API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://localhost:5173", 
         "https://radish-project-reader-gb4s8nsn.devinapps.com",
+        "https://*.devinapps.com",
         "*"
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Models
