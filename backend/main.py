@@ -758,6 +758,11 @@ async def start_chat(interviewer_id: str):
         "interviewer": interviewer
     }
 
+@app.options("/api/chat/message")
+async def options_send_message():
+    """Handle CORS preflight for message endpoint"""
+    return {"message": "OK"}
+
 @app.post("/api/chat/message", response_model=ChatResponse)
 async def send_message(chat_message: ChatMessage):
     """メッセージを送信し、AI応答を取得"""
