@@ -354,14 +354,11 @@ INTERVIEWERS: List[Dict[str, Any]] = [
 ]
 
 class GoogleSheetsQuestionManager:
-    """Google Sheets質問管理クラス - メモリ最適化版"""
+    """Google Sheets質問管理クラス - 新しいスプレッドシート対応版"""
 
     def __init__(self, spreadsheet_id: str):
         self.spreadsheet_id = spreadsheet_id
         self._questions_cache = None
-        self._evaluation_criteria_cache = None
-        self._ng_words_cache = None
-        self._interview_flow_cache = None
         self._service = None
 
     def _get_service(self):
@@ -374,100 +371,85 @@ class GoogleSheetsQuestionManager:
             self._service = build('sheets', 'v4', credentials=credentials)
         return self._service
 
-    def _load_sheet_data(self, sheet_name: str, cache_attr: str):
-        """指定されたシートのデータを読み込み（キャッシュ付き）"""
-        cached_data = getattr(self, cache_attr)
-        if cached_data is not None:
-            return cached_data
+    def _load_questions(self):
+        """ai_interview_questionsシートから質問データを読み込み"""
+        if self._questions_cache is not None:
+            return self._questions_cache
 
         try:
             service = self._get_service()
             result = service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{sheet_name}!A:Z'
+                range='ai_interview_questions!A:D'
             ).execute()
             values = result.get('values', [])
             
             if values:
                 headers = values[0]
-                data = [dict(zip(headers, row + [''] * (len(headers) - len(row)))) for row in values[1:]]
+                data = []
+                for row in values[1:]:
+                    row_data = row + [''] * (len(headers) - len(row))
+                    question_dict = {
+                        'Category': row_data[0] if len(row_data) > 0 else '',
+                        'Question': row_data[1] if len(row_data) > 1 else '',
+                        'Purpose': row_data[2] if len(row_data) > 2 else '',
+                        'Follow_Up': row_data[3] if len(row_data) > 3 else ''
+                    }
+                    data.append(question_dict)
             else:
                 data = []
             
-            setattr(self, cache_attr, data)
-            logger.info(f"Google Sheets {sheet_name}から{len(data)}件のデータを読み込みました")
+            self._questions_cache = data
+            logger.info(f"Google Sheets ai_interview_questionsから{len(data)}件の質問を読み込みました")
             return data
             
         except Exception as e:
-            logger.error(f"Google Sheets {sheet_name}データ読み込みエラー: {e}")
-            setattr(self, cache_attr, [])
+            logger.error(f"Google Sheets質問データ読み込みエラー: {e}")
+            self._questions_cache = []
             return []
 
     @property
     def questions(self):
         """質問データを取得（遅延読み込み）"""
-        return self._load_sheet_data('BasicQuestions', '_questions_cache')
-
-    @property
-    def evaluation_criteria(self):
-        """評価基準データを取得（遅延読み込み）"""
-        return self._load_sheet_data('EvaluationCriteria', '_evaluation_criteria_cache')
-
-    @property
-    def ng_words(self):
-        """NGワードデータを取得（遅延読み込み）"""
-        return self._load_sheet_data('NGWords', '_ng_words_cache')
-
-    @property
-    def interview_flow(self):
-        """面接フローデータを取得（遅延読み込み）"""
-        return self._load_sheet_data('InterviewFlow', '_interview_flow_cache')
+        return self._load_questions()
 
     def get_question_by_stage(self, dialogue_count: int) -> Dict[str, str]:
         """対話回数に基づいて適切な質問を取得"""
-        if not self.questions:
+        questions = self.questions
+        if not questions:
             return {}
         
-        intro_questions = [q for q in self.questions if '自己紹介' in q.get('Category', '')]
-        experience_questions = [q for q in self.questions if '職歴' in q.get('Category', '') or '経験' in q.get('Category', '')]
-        motivation_questions = [q for q in self.questions if '志望' in q.get('Category', '')]
-        skill_questions = [q for q in self.questions if '強み' in q.get('Category', '') or 'スキル' in q.get('Category', '')]
-        other_questions = [q for q in self.questions if q not in intro_questions + experience_questions + motivation_questions + skill_questions]
+        intro_questions = [q for q in questions if '自己紹介' in q.get('Category', '')]
+        experience_questions = [q for q in questions if '職歴' in q.get('Category', '') or '経験' in q.get('Category', '')]
+        motivation_questions = [q for q in questions if '志望' in q.get('Category', '') or '動機' in q.get('Category', '')]
+        skill_questions = [q for q in questions if '強み' in q.get('Category', '') or 'スキル' in q.get('Category', '')]
+        other_questions = [q for q in questions if q not in intro_questions + experience_questions + motivation_questions + skill_questions]
         
         if dialogue_count <= 2:
-            return intro_questions[0] if intro_questions else self.questions[0]
+            return intro_questions[0] if intro_questions else questions[0]
         elif dialogue_count <= 5:
             index = (dialogue_count - 3) % len(experience_questions) if experience_questions else 0
-            return experience_questions[index] if experience_questions else self.questions[1] if len(self.questions) > 1 else self.questions[0]
+            return experience_questions[index] if experience_questions else questions[1] if len(questions) > 1 else questions[0]
         elif dialogue_count <= 8:
             index = (dialogue_count - 6) % len(motivation_questions) if motivation_questions else 0
-            return motivation_questions[index] if motivation_questions else self.questions[2] if len(self.questions) > 2 else self.questions[0]
+            return motivation_questions[index] if motivation_questions else questions[2] if len(questions) > 2 else questions[0]
         elif dialogue_count <= 11:
             index = (dialogue_count - 9) % len(skill_questions) if skill_questions else 0
-            return skill_questions[index] if skill_questions else self.questions[3] if len(self.questions) > 3 else self.questions[0]
+            return skill_questions[index] if skill_questions else questions[3] if len(questions) > 3 else questions[0]
         else:
             index = (dialogue_count - 12) % len(other_questions) if other_questions else 0
-            return other_questions[index] if other_questions else self.questions[-1]
+            return other_questions[index] if other_questions else questions[-1]
 
     def get_evaluation_criteria(self, question_data: Dict[str, str]) -> str:
-        """質問の評価基準を取得"""
-        if not self.evaluation_criteria:
-            return ""
-        
-        criteria = []
-        for criterion in self.evaluation_criteria:
-            criteria.append(f"{criterion.get('Evaluation_Item', '')}: {criterion.get('Description', '')}")
-        return "\n".join(criteria)
+        """質問の評価基準を取得（質問の目的から生成）"""
+        purpose = question_data.get('Purpose', '')
+        if purpose:
+            return f"評価基準: {purpose}"
+        return "一般的な面接評価基準に基づいて評価してください。"
 
     def get_ng_words(self, question_data: Dict[str, str]) -> str:
-        """NGワードを取得"""
-        if not self.ng_words:
-            return ""
-        
-        ng_examples = []
-        for ng_item in self.ng_words:
-            ng_examples.append(f"{ng_item.get('Category', '')}: {ng_item.get('NG_Examples', '')}")
-        return "\n".join(ng_examples)
+        """NGワードを取得（一般的なNGパターンを返す）"""
+        return "差別的発言、不適切な表現、虚偽の情報は避けてください。"
 
     def get_followup_question(self, question_data: Dict[str, str]) -> str:
         """フォローアップ質問を取得"""
@@ -606,7 +588,19 @@ class GoogleSheetsService:
                 conversation_id,
                 question,
                 answer,
-                evaluation
+                evaluation,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
             ]]
 
             body = {
@@ -615,7 +609,7 @@ class GoogleSheetsService:
 
             result = service.spreadsheets().values().append(
                 spreadsheetId=SHEET_ID,
-                range='logs!A:E',
+                range='logs!A:Q',
                 valueInputOption='USER_ENTERED',
                 body=body
             ).execute()
